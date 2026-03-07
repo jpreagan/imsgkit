@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Swift format
+        run: |
+          swift format lint --strict --recursive Sources
+          swift format lint --strict Package.swift
+
+      - name: Swift test
+        run: |
+          if find Tests -name '*.swift' -print -quit | grep -q .; then
+            swift test
+          else
+            echo "No Swift tests yet"
+          fi
+
+      - name: Swift build
+        run: swift build -c release
+
+      - name: Swift smoke test
+        run: ./.build/release/imsgd version
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: imsgctl/go.mod
+
+      - name: Check formatting
+        working-directory: imsgctl
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        working-directory: imsgctl
+        run: go vet ./...
+
+      - name: Test
+        working-directory: imsgctl
+        run: go test ./...
+
+      - name: Build
+        working-directory: imsgctl
+        run: go build ./...
+
+  quality:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+      - swift
+      - go
+    steps:
+      - name: Verify required jobs
+        run: |
+          if [ "${{ needs.swift.result }}" != "success" ]; then
+            echo "swift did not succeed"
+            exit 1
+          fi
+          if [ "${{ needs.go.result }}" != "success" ]; then
+            echo "go did not succeed"
+            exit 1
+          fi

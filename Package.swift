@@ -10,8 +10,18 @@ let package = Package(
     .executable(name: "imsgd", targets: ["imsgd"])
   ],
   targets: [
+    .target(
+      name: "ImsgProtocol"
+    ),
     .executableTarget(
-      name: "imsgd"
-    )
+      name: "imsgd",
+      dependencies: [
+        "ImsgProtocol"
+      ]
+    ),
+    .testTarget(
+      name: "ImsgProtocolTests",
+      dependencies: ["ImsgProtocol"]
+    ),
   ]
 )

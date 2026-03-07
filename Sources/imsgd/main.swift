@@ -1,5 +1,6 @@
 import Foundation
 import ImsgProtocol
+import MessagesStore
 
 private let version = "dev"
 
@@ -18,6 +19,7 @@ enum ImsgdError: Error, CustomStringConvertible {
 }
 
 struct Options {
+  let dbPath: String
   let showVersion: Bool
 }
 
@@ -29,7 +31,7 @@ struct ImsgdMain {
       if options.showVersion {
         FileHandle.standardOutput.write(Data("\(version)\n".utf8))
       } else {
-        try serve()
+        try serve(dbPath: options.dbPath)
       }
     } catch {
       FileHandle.standardError.write(Data("\(error)\n".utf8))
@@ -39,6 +41,7 @@ struct ImsgdMain {
 }
 
 private func parseOptions(arguments: [String]) throws -> Options {
+  var dbPath = MessagesHealthProbe.defaultChatDBPath
   var showVersion = false
   var index = 0
 
@@ -48,11 +51,17 @@ private func parseOptions(arguments: [String]) throws -> Options {
     case "version", "--version":
       showVersion = true
       index += 1
+    case "--db":
+      guard index + 1 < arguments.count else {
+        throw ImsgdError.invalidArguments("missing value for --db")
+      }
+      dbPath = arguments[index + 1]
+      index += 2
     case "--help", "-h":
       throw ImsgdError.invalidArguments(
         """
         usage:
-          imsgd
+          imsgd [--db PATH]
           imsgd version
         """)
     default:
@@ -60,21 +69,21 @@ private func parseOptions(arguments: [String]) throws -> Options {
     }
   }
 
-  return Options(showVersion: showVersion)
+  return Options(dbPath: dbPath, showVersion: showVersion)
 }
 
-private func serve() throws {
+private func serve(dbPath: String) throws {
   let input = FileHandle.standardInput
   let output = FileHandle.standardOutput
 
   while let frame = try FrameIO.readFrame(from: input) {
-    let responseEnvelope = try handleFrame(frame)
+    let responseEnvelope = try handleFrame(frame, dbPath: dbPath)
     let payload = try JSONSerialization.data(withJSONObject: responseEnvelope, options: [])
     try FrameIO.writeFrame(to: output, payload: payload)
   }
 }
 
-private func handleFrame(_ frame: Data) throws -> [String: Any] {
+private func handleFrame(_ frame: Data, dbPath: String) throws -> [String: Any] {
   guard
     let object = try JSONSerialization.jsonObject(with: frame, options: []) as? [String: Any],
     let kind = object["kind"] as? String,
@@ -89,6 +98,8 @@ private func handleFrame(_ frame: Data) throws -> [String: Any] {
   switch method {
   case ProtocolConstants.handshakeMethod:
     return makeSuccessEnvelope(id: id, result: handleHandshake())
+  case ProtocolConstants.healthMethod:
+    return makeSuccessEnvelope(id: id, result: handleHealth(dbPath: dbPath))
   default:
     return makeErrorEnvelope(id: id, code: "not_implemented", message: "method not implemented")
   }
@@ -105,7 +116,23 @@ private func handleHandshake() -> [String: Any] {
       "json_envelope",
       "length_prefixed_frames",
       "local_transport",
+      "health",
     ],
+  ]
+}
+
+private func handleHealth(dbPath: String) -> [String: Any] {
+  let messagesHealth = MessagesHealthProbe.probe(dbPath: dbPath)
+
+  return [
+    "ok": messagesHealth.ok,
+    "read_only": true,
+    "db_path": messagesHealth.dbPath,
+    "db_exists": messagesHealth.dbExists,
+    "can_read_db": messagesHealth.canReadDB,
+    "sqlite_open_ok": messagesHealth.sqliteOpenOK,
+    "protocol_version": ProtocolConstants.protocolVersion,
+    "server_version": version,
   ]
 }
 

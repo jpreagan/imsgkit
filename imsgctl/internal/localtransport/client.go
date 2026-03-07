@@ -12,6 +12,7 @@ import (
 
 type Options struct {
 	HelperPath string
+	DBPath     string
 }
 
 type Client struct {
@@ -29,7 +30,7 @@ func Start(ctx context.Context, options Options) (*Client, error) {
 		helperPath = "imsgd"
 	}
 
-	cmd := exec.CommandContext(ctx, helperPath)
+	cmd := exec.CommandContext(ctx, helperPath, "--db", options.DBPath)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open stdin: %w", err)
@@ -78,6 +79,10 @@ func (c *Client) Close() error {
 
 func (c *Client) Handshake(ctx context.Context) (protocol.HandshakeResponse, error) {
 	return call[protocol.HandshakeResponse](ctx, c, protocol.MethodHandshake, nil)
+}
+
+func (c *Client) Health(ctx context.Context) (protocol.HealthResponse, error) {
+	return call[protocol.HealthResponse](ctx, c, protocol.MethodHealth, nil)
 }
 
 func call[T any](ctx context.Context, c *Client, method string, params any) (T, error) {

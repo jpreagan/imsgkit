@@ -95,13 +95,22 @@ private func handleFrame(_ frame: Data, dbPath: String) throws -> [String: Any] 
     throw ImsgdError.invalidEnvelope
   }
 
-  switch method {
-  case ProtocolConstants.handshakeMethod:
-    return makeSuccessEnvelope(id: id, result: handleHandshake())
-  case ProtocolConstants.healthMethod:
-    return makeSuccessEnvelope(id: id, result: handleHealth(dbPath: dbPath))
-  default:
-    return makeErrorEnvelope(id: id, code: "not_implemented", message: "method not implemented")
+  do {
+    switch method {
+    case ProtocolConstants.handshakeMethod:
+      return makeSuccessEnvelope(id: id, result: handleHandshake())
+    case ProtocolConstants.healthMethod:
+      return makeSuccessEnvelope(id: id, result: handleHealth(dbPath: dbPath))
+    case ProtocolConstants.listChatsMethod:
+      let limit =
+        ((request["params"] as? [String: Any])?["limit"] as? Int)
+        ?? ChatListQuery.defaultLimit
+      return makeSuccessEnvelope(id: id, result: try handleListChats(dbPath: dbPath, limit: limit))
+    default:
+      return makeErrorEnvelope(id: id, code: "not_implemented", message: "method not implemented")
+    }
+  } catch {
+    return makeErrorEnvelope(id: id, code: "internal", message: "\(error)")
   }
 }
 
@@ -117,6 +126,7 @@ private func handleHandshake() -> [String: Any] {
       "length_prefixed_frames",
       "local_transport",
       "health",
+      "chats",
     ],
   ]
 }
@@ -136,7 +146,11 @@ private func handleHealth(dbPath: String) -> [String: Any] {
   ]
 }
 
-private func makeSuccessEnvelope(id: String, result: [String: Any]) -> [String: Any] {
+private func handleListChats(dbPath: String, limit: Int) throws -> [[String: Any]] {
+  try ChatListQuery.list(dbPath: dbPath, limit: limit).map(\.jsonObject)
+}
+
+private func makeSuccessEnvelope(id: String, result: Any) -> [String: Any] {
   [
     "kind": ProtocolConstants.responseKind,
     "response": [

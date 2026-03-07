@@ -63,6 +63,7 @@ func newRootCommand() *cobra.Command {
 	rootCmd.SetErr(os.Stderr)
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.AddCommand(
+		newChatsCommand(),
 		newHealthCommand(),
 		newVersionCommand(),
 	)

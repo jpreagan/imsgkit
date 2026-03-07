@@ -18,32 +18,29 @@ const (
 func newHealthCommand() *cobra.Command {
 	var dbPath string
 	var jsonOutput bool
-	var helperPath string
 
 	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Check local helper access to Messages",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHealth(cmd, dbPath, helperPath, jsonOutput)
+			return runHealth(cmd, dbPath, jsonOutput)
 		},
 	}
 
 	flags := cmd.Flags()
 	flags.StringVar(&dbPath, "db", defaultChatDBPath, "path to Messages chat.db")
 	flags.BoolVar(&jsonOutput, "json", false, "emit JSON output")
-	flags.StringVar(&helperPath, "helper", "", "path to imsgd helper")
 
 	return cmd
 }
 
-func runHealth(cmd *cobra.Command, dbPath, helperPath string, jsonOutput bool) error {
+func runHealth(cmd *cobra.Command, dbPath string, jsonOutput bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), healthTimeout)
 	defer cancel()
 
 	client, err := localtransport.Start(ctx, localtransport.Options{
-		HelperPath: helperPath,
-		DBPath:     dbPath,
+		DBPath: dbPath,
 	})
 	if err != nil {
 		return &exitCodeError{code: 1, err: fmt.Errorf("health failed: %w", err)}

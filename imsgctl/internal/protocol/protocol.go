@@ -11,6 +11,7 @@ const (
 
 	MethodHandshake = "Handshake"
 	MethodHealth    = "Health"
+	MethodListChats = "ListChats"
 )
 
 type Envelope struct {
@@ -53,6 +54,23 @@ type HealthResponse struct {
 	SQLiteOpenOK    bool   `json:"sqlite_open_ok"`
 	ProtocolVersion string `json:"protocol_version"`
 	ServerVersion   string `json:"server_version"`
+}
+
+type ListChatsParams struct {
+	Limit int `json:"limit"`
+}
+
+type ChatSummary struct {
+	ID               string   `json:"id"`
+	ChatID           int64    `json:"chat_id"`
+	ChatGUID         string   `json:"chat_guid"`
+	Service          string   `json:"service"`
+	Identifier       string   `json:"identifier"`
+	Label            string   `json:"label"`
+	ParticipantCount int      `json:"participant_count"`
+	Participants     []string `json:"participants"`
+	LastMessageAt    *string  `json:"last_message_at"`
+	MessageCount     int      `json:"message_count"`
 }
 
 func Encode(value any) (json.RawMessage, error) {

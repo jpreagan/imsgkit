@@ -61,12 +61,12 @@ type ListChatsParams struct {
 }
 
 type ChatSummary struct {
-	ID               string   `json:"id"`
 	ChatID           int64    `json:"chat_id"`
 	ChatGUID         string   `json:"chat_guid"`
 	Service          string   `json:"service"`
 	Identifier       string   `json:"identifier"`
 	Label            string   `json:"label"`
+	ContactName      *string  `json:"contact_name"`
 	ParticipantCount int      `json:"participant_count"`
 	Participants     []string `json:"participants"`
 	LastMessageAt    *string  `json:"last_message_at"`

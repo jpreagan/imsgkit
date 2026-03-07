@@ -1,3 +1,4 @@
+import ContactsResolver
 import Foundation
 import ImsgProtocol
 import MessagesStore
@@ -147,7 +148,18 @@ private func handleHealth(dbPath: String) -> [String: Any] {
 }
 
 private func handleListChats(dbPath: String, limit: Int) throws -> [[String: Any]] {
-  try ChatListQuery.list(dbPath: dbPath, limit: limit).map(\.jsonObject)
+  let resolveContact = ContactLookupResolver.make()
+  let contactLookup: ContactLookup = { identifier in
+    resolveContact(identifier).map {
+      ResolvedChatContact(name: $0.name, label: $0.label)
+    }
+  }
+
+  return try ChatListQuery.list(
+    dbPath: dbPath,
+    limit: limit,
+    contactLookup: contactLookup
+  ).map(\.jsonObject)
 }
 
 private func makeSuccessEnvelope(id: String, result: Any) -> [String: Any] {

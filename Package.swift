@@ -14,6 +14,9 @@ let package = Package(
       name: "ImsgProtocol"
     ),
     .target(
+      name: "ContactsResolver"
+    ),
+    .target(
       name: "MessagesStore",
       linkerSettings: [
         .linkedLibrary("sqlite3")
@@ -22,6 +25,7 @@ let package = Package(
     .executableTarget(
       name: "imsgd",
       dependencies: [
+        "ContactsResolver",
         "ImsgProtocol",
         "MessagesStore",
       ]

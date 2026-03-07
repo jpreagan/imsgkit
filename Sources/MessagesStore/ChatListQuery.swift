@@ -2,35 +2,35 @@ import Foundation
 import SQLite3
 
 public struct ChatSummary: Sendable, Equatable {
-  public let id: String
   public let chatID: Int64
   public let chatGUID: String
   public let service: String
   public let identifier: String
   public let label: String
+  public let contactName: String?
   public let participantCount: Int
   public let participants: [String]
   public let lastMessageAt: String?
   public let messageCount: Int
 
   public init(
-    id: String,
     chatID: Int64,
     chatGUID: String,
     service: String,
     identifier: String,
     label: String,
+    contactName: String? = nil,
     participantCount: Int,
     participants: [String],
     lastMessageAt: String?,
     messageCount: Int
   ) {
-    self.id = id
     self.chatID = chatID
     self.chatGUID = chatGUID
     self.service = service
     self.identifier = identifier
     self.label = label
+    self.contactName = contactName
     self.participantCount = participantCount
     self.participants = participants
     self.lastMessageAt = lastMessageAt
@@ -39,12 +39,12 @@ public struct ChatSummary: Sendable, Equatable {
 
   public var jsonObject: [String: Any] {
     [
-      "id": id,
       "chat_id": chatID,
       "chat_guid": chatGUID,
       "service": service,
       "identifier": identifier,
       "label": label,
+      "contact_name": contactName ?? NSNull(),
       "participant_count": participantCount,
       "participants": participants,
       "last_message_at": lastMessageAt ?? NSNull(),
@@ -52,6 +52,18 @@ public struct ChatSummary: Sendable, Equatable {
     ]
   }
 }
+
+public struct ResolvedChatContact: Sendable, Equatable {
+  public let name: String
+  public let label: String
+
+  public init(name: String, label: String) {
+    self.name = name
+    self.label = label
+  }
+}
+
+public typealias ContactLookup = @Sendable (String) -> ResolvedChatContact?
 
 enum MessagesStoreError: Error, CustomStringConvertible {
   case invalidLimit(Int)
@@ -76,7 +88,8 @@ public enum ChatListQuery {
 
   public static func list(
     dbPath: String = MessagesHealthProbe.defaultChatDBPath,
-    limit: Int = defaultLimit
+    limit: Int = defaultLimit,
+    contactLookup: ContactLookup = { _ in nil }
   ) throws -> [ChatSummary] {
     if limit < 0 {
       throw MessagesStoreError.invalidLimit(limit)
@@ -91,7 +104,7 @@ public enum ChatListQuery {
       let rows = try loadChatRows(database: database, limit: limit)
       return try rows.map { row in
         let participants = try loadParticipants(database: database, chatID: row.chatID)
-        return makeSummary(row: row, participants: participants)
+        return makeSummary(row: row, participants: participants, contactLookup: contactLookup)
       }
     }
   }
@@ -196,21 +209,35 @@ public enum ChatListQuery {
     }
   }
 
-  private static func makeSummary(row: ChatRow, participants: [String]) -> ChatSummary {
+  private static func makeSummary(
+    row: ChatRow,
+    participants: [String],
+    contactLookup: ContactLookup
+  ) -> ChatSummary {
     let displayName = row.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     let roomName = row.roomName.trimmingCharacters(in: .whitespacesAndNewlines)
     let canonicalParticipants =
       participants.isEmpty && !row.identifier.isEmpty
       ? [row.identifier]
       : participants
+    let labeledParticipants = canonicalParticipants.map {
+      LabeledParticipant(identifier: $0, contact: contactLookup($0))
+    }
+    let directContact = resolveDirectContact(
+      rowIdentifier: row.identifier,
+      labeledParticipants: labeledParticipants,
+      contactLookup: contactLookup
+    )
 
     let label: String
     if !displayName.isEmpty {
       label = displayName
     } else if !roomName.isEmpty && roomName != row.identifier {
       label = roomName
+    } else if let directContact {
+      label = directContact.label
     } else if !canonicalParticipants.isEmpty {
-      label = canonicalParticipants.joined(separator: ", ")
+      label = labeledParticipants.map(\.label).joined(separator: ", ")
     } else if !row.identifier.isEmpty {
       label = row.identifier
     } else {
@@ -218,17 +245,43 @@ public enum ChatListQuery {
     }
 
     return ChatSummary(
-      id: "chat_id:\(row.chatID)",
       chatID: row.chatID,
       chatGUID: row.chatGUID,
       service: row.service,
       identifier: row.identifier,
       label: label,
+      contactName: directContact?.name,
       participantCount: canonicalParticipants.count,
       participants: canonicalParticipants,
       lastMessageAt: formatMessagesTimestamp(row.lastMessageDate),
       messageCount: row.messageCount
     )
+  }
+
+  private static func resolveDirectContact(
+    rowIdentifier: String,
+    labeledParticipants: [LabeledParticipant],
+    contactLookup: ContactLookup
+  ) -> ResolvedChatContact? {
+    let normalizedIdentifier = rowIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !normalizedIdentifier.isEmpty, let directContact = contactLookup(normalizedIdentifier) {
+      return directContact
+    }
+
+    guard labeledParticipants.count == 1 else {
+      return nil
+    }
+
+    return labeledParticipants[0].contact
+  }
+
+  private struct LabeledParticipant {
+    let identifier: String
+    let contact: ResolvedChatContact?
+
+    var label: String {
+      contact?.label ?? identifier
+    }
   }
 
   private static func formatMessagesTimestamp(_ timestamp: Int64?) -> String? {

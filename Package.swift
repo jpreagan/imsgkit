@@ -13,15 +13,26 @@ let package = Package(
     .target(
       name: "ImsgProtocol"
     ),
+    .target(
+      name: "MessagesStore",
+      linkerSettings: [
+        .linkedLibrary("sqlite3")
+      ]
+    ),
     .executableTarget(
       name: "imsgd",
       dependencies: [
-        "ImsgProtocol"
+        "ImsgProtocol",
+        "MessagesStore",
       ]
     ),
     .testTarget(
       name: "ImsgProtocolTests",
       dependencies: ["ImsgProtocol"]
+    ),
+    .testTarget(
+      name: "MessagesStoreTests",
+      dependencies: ["MessagesStore"]
     ),
   ]
 )

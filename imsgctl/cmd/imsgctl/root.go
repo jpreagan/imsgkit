@@ -62,7 +62,10 @@ func newRootCommand() *cobra.Command {
 	rootCmd.SetOut(os.Stdout)
 	rootCmd.SetErr(os.Stderr)
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
-	rootCmd.AddCommand(newVersionCommand())
+	rootCmd.AddCommand(
+		newHealthCommand(),
+		newVersionCommand(),
+	)
 
 	return rootCmd
 }

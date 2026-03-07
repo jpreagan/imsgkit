@@ -10,6 +10,7 @@ const (
 	KindResponse = "response"
 
 	MethodHandshake = "Handshake"
+	MethodHealth    = "Health"
 )
 
 type Envelope struct {
@@ -41,6 +42,17 @@ type HandshakeResponse struct {
 	ServerVersion   string   `json:"server_version"`
 	ReadOnly        bool     `json:"read_only"`
 	Capabilities    []string `json:"capabilities"`
+}
+
+type HealthResponse struct {
+	OK              bool   `json:"ok"`
+	ReadOnly        bool   `json:"read_only"`
+	DBPath          string `json:"db_path"`
+	DBExists        bool   `json:"db_exists"`
+	CanReadDB       bool   `json:"can_read_db"`
+	SQLiteOpenOK    bool   `json:"sqlite_open_ok"`
+	ProtocolVersion string `json:"protocol_version"`
+	ServerVersion   string `json:"server_version"`
 }
 
 func Encode(value any) (json.RawMessage, error) {

@@ -13,7 +13,6 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
   #expect(
     chats[0]
       == ChatSummary(
-        id: "chat_id:11",
         chatID: 11,
         chatGUID: "group-guid",
         service: "iMessage",
@@ -29,7 +28,6 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
   #expect(
     chats[1]
       == ChatSummary(
-        id: "chat_id:10",
         chatID: 10,
         chatGUID: "direct-guid",
         service: "iMessage",
@@ -45,7 +43,6 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
   #expect(
     chats[2]
       == ChatSummary(
-        id: "chat_id:12",
         chatID: 12,
         chatGUID: "named-group-guid",
         service: "iMessage",
@@ -57,6 +54,32 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
         messageCount: 0
       )
   )
+}
+
+@Test
+func listUsesContactLabelsWhenLookupIsAvailable() throws {
+  let dbURL = try makeChatListTestDatabase()
+  let chats = try ChatListQuery.list(dbPath: dbURL.path, limit: 10) { identifier in
+    switch identifier {
+    case "+12125550100":
+      return ResolvedChatContact(name: "Jane Doe", label: "Jane Doe (+12125550100)")
+    case "+12125550101":
+      return ResolvedChatContact(name: "Alex One", label: "Alex One (+12125550101)")
+    case "+12125550102":
+      return ResolvedChatContact(name: "Alex Two", label: "Alex Two (+12125550102)")
+    default:
+      return nil
+    }
+  }
+
+  #expect(chats[0].label == "Alex One (+12125550101), Alex Two (+12125550102)")
+  #expect(chats[0].contactName == nil)
+
+  #expect(chats[1].label == "Jane Doe (+12125550100)")
+  #expect(chats[1].contactName == "Jane Doe")
+
+  #expect(chats[2].label == "Project Thread")
+  #expect(chats[2].contactName == nil)
 }
 
 @Test

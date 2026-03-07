@@ -64,7 +64,7 @@ func runChats(cmd *cobra.Command, dbPath string, jsonOutput bool, limit int) err
 	}
 
 	for _, chat := range chats {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s last=%s\n", chat.ID, chat.Label, formatLastMessage(chat))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%d] %s last=%s\n", chat.ChatID, chat.Label, formatLastMessage(chat))
 	}
 
 	return nil

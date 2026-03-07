@@ -1,4 +1,4 @@
-name: quality
+name: ci
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  swift-quality:
+  swift:
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -36,7 +36,7 @@ jobs:
       - name: Swift smoke test
         run: ./.build/release/imsgd version
 
-  go-quality:
+  go:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -73,16 +73,16 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:
-      - swift-quality
-      - go-quality
+      - swift
+      - go
     steps:
       - name: Verify required jobs
         run: |
-          if [ "${{ needs.swift-quality.result }}" != "success" ]; then
-            echo "swift-quality did not succeed"
+          if [ "${{ needs.swift.result }}" != "success" ]; then
+            echo "swift did not succeed"
             exit 1
           fi
-          if [ "${{ needs.go-quality.result }}" != "success" ]; then
-            echo "go-quality did not succeed"
+          if [ "${{ needs.go.result }}" != "success" ]; then
+            echo "go did not succeed"
             exit 1
           fi

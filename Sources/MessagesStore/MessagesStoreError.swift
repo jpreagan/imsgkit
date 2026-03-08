@@ -1,7 +1,6 @@
 enum MessagesStoreError: Error, CustomStringConvertible {
   case invalidLimit(Int)
   case invalidChatID(Int64)
-  case invalidBeforeMessageID(Int64)
   case unsupportedSchema(String)
   case openDatabase(String)
   case prepareStatement(String)
@@ -13,8 +12,6 @@ enum MessagesStoreError: Error, CustomStringConvertible {
       return "limit must be zero or greater"
     case .invalidChatID:
       return "chat_id must be greater than zero"
-    case .invalidBeforeMessageID:
-      return "before must be greater than zero"
     case .unsupportedSchema(let message):
       return message
     case .openDatabase(let message),

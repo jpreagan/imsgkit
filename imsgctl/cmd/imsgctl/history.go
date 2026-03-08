@@ -20,14 +20,15 @@ func newHistoryCommand() *cobra.Command {
 	var jsonOutput bool
 	var chatID int64
 	var limit int
-	var before int64
+	var start string
+	var end string
 
 	cmd := &cobra.Command{
 		Use:   "history",
 		Short: "List messages from a chat",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHistory(cmd, dbPath, jsonOutput, showAttachments, chatID, limit, before)
+			return runHistory(cmd, dbPath, jsonOutput, showAttachments, chatID, limit, start, end)
 		},
 	}
 
@@ -37,7 +38,8 @@ func newHistoryCommand() *cobra.Command {
 	flags.BoolVar(&jsonOutput, "json", false, "emit JSONL output")
 	flags.Int64Var(&chatID, "chat-id", 0, "chat identifier from imsgctl chats")
 	flags.IntVar(&limit, "limit", 50, "maximum messages to return")
-	flags.Int64Var(&before, "before", 0, "return messages before this message_id cursor")
+	flags.StringVar(&start, "start", "", "ISO8601 start (inclusive)")
+	flags.StringVar(&end, "end", "", "ISO8601 end (exclusive)")
 	_ = cmd.MarkFlagRequired("chat-id")
 
 	return cmd
@@ -50,16 +52,14 @@ func runHistory(
 	showAttachments bool,
 	chatID int64,
 	limit int,
-	before int64,
+	start string,
+	end string,
 ) error {
 	if chatID <= 0 {
 		return &exitCodeError{code: 1, err: fmt.Errorf("chat-id must be greater than zero")}
 	}
 	if limit < 0 {
 		return &exitCodeError{code: 1, err: fmt.Errorf("limit must be zero or greater")}
-	}
-	if before < 0 {
-		return &exitCodeError{code: 1, err: fmt.Errorf("before must be zero or greater")}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
@@ -73,12 +73,16 @@ func runHistory(
 	}
 	defer client.Close()
 
-	var beforeCursor *int64
-	if before > 0 {
-		beforeCursor = &before
+	var startFilter *string
+	if start != "" {
+		startFilter = &start
+	}
+	var endFilter *string
+	if end != "" {
+		endFilter = &end
 	}
 
-	messages, err := client.GetHistory(ctx, chatID, limit, beforeCursor)
+	messages, err := client.GetHistory(ctx, chatID, limit, startFilter, endFilter)
 	if err != nil {
 		return &exitCodeError{code: 1, err: fmt.Errorf("get history failed: %w", err)}
 	}

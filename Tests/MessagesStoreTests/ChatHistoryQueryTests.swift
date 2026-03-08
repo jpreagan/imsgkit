@@ -133,13 +133,26 @@ func historyListUsesDestinationCallerContactForOutboundMessages() throws {
 }
 
 @Test
-func historyListRespectsBeforeCursor() throws {
+func historyListAppliesStartDateFilter() throws {
   let dbURL = try makeChatHistoryTestDatabase()
   let messages = try ChatHistoryQuery.list(
     dbPath: dbURL.path,
     chatID: 10,
     limit: 2,
-    beforeMessageID: 103
+    startDate: Date(timeIntervalSinceReferenceDate: 2)
+  )
+
+  #expect(messages.map(\.id) == [103, 101])
+}
+
+@Test
+func historyListAppliesEndDateFilter() throws {
+  let dbURL = try makeChatHistoryTestDatabase()
+  let messages = try ChatHistoryQuery.list(
+    dbPath: dbURL.path,
+    chatID: 10,
+    limit: 10,
+    endDate: Date(timeIntervalSinceReferenceDate: 3)
   )
 
   #expect(messages.map(\.id) == [101, 100])

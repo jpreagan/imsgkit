@@ -111,14 +111,16 @@ private func handleFrame(_ frame: Data, dbPath: String) throws -> [String: Any] 
       let params = (request["params"] as? [String: Any]) ?? [:]
       let chatID = try requiredInt64Param(params["chat_id"], name: "chat_id")
       let limit = optionalIntParam(params["limit"]) ?? ChatHistoryQuery.defaultLimit
-      let beforeMessageID = optionalInt64Param(params["before"])
+      let start = optionalStringParam(params["start"])
+      let end = optionalStringParam(params["end"])
       return makeSuccessEnvelope(
         id: id,
         result: try handleGetHistory(
           dbPath: dbPath,
           chatID: chatID,
           limit: limit,
-          beforeMessageID: beforeMessageID
+          start: start,
+          end: end
         )
       )
     default:
@@ -175,14 +177,16 @@ private func handleGetHistory(
   dbPath: String,
   chatID: Int64,
   limit: Int,
-  beforeMessageID: Int64?
+  start: String?,
+  end: String?
 ) throws -> [[String: Any]] {
   let contactLookup = makeContactLookup()
   return try ChatHistoryQuery.list(
     dbPath: dbPath,
     chatID: chatID,
     limit: limit,
-    beforeMessageID: beforeMessageID,
+    startDate: try parseISO8601Date(start, name: "start"),
+    endDate: try parseISO8601Date(end, name: "end"),
     contactLookup: contactLookup
   ).map(\.jsonObject)
 }
@@ -227,6 +231,35 @@ private func optionalIntParam(_ value: Any?) -> Int? {
   default:
     return nil
   }
+}
+
+private func optionalStringParam(_ value: Any?) -> String? {
+  guard let string = value as? String else {
+    return nil
+  }
+
+  let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+  return trimmed.isEmpty ? nil : trimmed
+}
+
+private func parseISO8601Date(_ value: String?, name: String) throws -> Date? {
+  guard let value else {
+    return nil
+  }
+
+  let fractional = ISO8601DateFormatter()
+  fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  if let date = fractional.date(from: value) {
+    return date
+  }
+
+  let standard = ISO8601DateFormatter()
+  standard.formatOptions = [.withInternetDateTime]
+  if let date = standard.date(from: value) {
+    return date
+  }
+
+  throw ImsgdError.invalidArguments("\(name) must be a valid ISO8601 timestamp")
 }
 
 private func makeSuccessEnvelope(id: String, result: Any) -> [String: Any] {

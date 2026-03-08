@@ -65,6 +65,7 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(
 		newChatsCommand(),
 		newHealthCommand(),
+		newHistoryCommand(),
 		newVersionCommand(),
 	)
 

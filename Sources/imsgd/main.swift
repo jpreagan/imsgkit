@@ -107,6 +107,20 @@ private func handleFrame(_ frame: Data, dbPath: String) throws -> [String: Any] 
         ((request["params"] as? [String: Any])?["limit"] as? Int)
         ?? ChatListQuery.defaultLimit
       return makeSuccessEnvelope(id: id, result: try handleListChats(dbPath: dbPath, limit: limit))
+    case ProtocolConstants.getHistoryMethod:
+      let params = (request["params"] as? [String: Any]) ?? [:]
+      let chatID = try requiredInt64Param(params["chat_id"], name: "chat_id")
+      let limit = optionalIntParam(params["limit"]) ?? ChatHistoryQuery.defaultLimit
+      let beforeMessageID = optionalInt64Param(params["before"])
+      return makeSuccessEnvelope(
+        id: id,
+        result: try handleGetHistory(
+          dbPath: dbPath,
+          chatID: chatID,
+          limit: limit,
+          beforeMessageID: beforeMessageID
+        )
+      )
     default:
       return makeErrorEnvelope(id: id, code: "not_implemented", message: "method not implemented")
     }
@@ -128,6 +142,7 @@ private func handleHandshake() -> [String: Any] {
       "local_transport",
       "health",
       "chats",
+      "history",
     ],
   ]
 }
@@ -148,18 +163,70 @@ private func handleHealth(dbPath: String) -> [String: Any] {
 }
 
 private func handleListChats(dbPath: String, limit: Int) throws -> [[String: Any]] {
-  let resolveContact = ContactLookupResolver.make()
-  let contactLookup: ContactLookup = { identifier in
-    resolveContact(identifier).map {
-      ResolvedChatContact(name: $0.name, label: $0.label)
-    }
-  }
-
+  let contactLookup = makeContactLookup()
   return try ChatListQuery.list(
     dbPath: dbPath,
     limit: limit,
     contactLookup: contactLookup
   ).map(\.jsonObject)
+}
+
+private func handleGetHistory(
+  dbPath: String,
+  chatID: Int64,
+  limit: Int,
+  beforeMessageID: Int64?
+) throws -> [[String: Any]] {
+  let contactLookup = makeContactLookup()
+  return try ChatHistoryQuery.list(
+    dbPath: dbPath,
+    chatID: chatID,
+    limit: limit,
+    beforeMessageID: beforeMessageID,
+    contactLookup: contactLookup
+  ).map(\.jsonObject)
+}
+
+private func makeContactLookup() -> ContactLookup {
+  let resolveContact = ContactLookupResolver.make()
+  return { identifier in
+    resolveContact(identifier).map {
+      ResolvedChatContact(name: $0.name, label: $0.label)
+    }
+  }
+}
+
+private func requiredInt64Param(_ value: Any?, name: String) throws -> Int64 {
+  guard let parsed = optionalInt64Param(value) else {
+    throw ImsgdError.invalidArguments("missing value for \(name)")
+  }
+  return parsed
+}
+
+private func optionalInt64Param(_ value: Any?) -> Int64? {
+  switch value {
+  case let intValue as Int:
+    return Int64(intValue)
+  case let int64Value as Int64:
+    return int64Value
+  case let number as NSNumber:
+    return number.int64Value
+  default:
+    return nil
+  }
+}
+
+private func optionalIntParam(_ value: Any?) -> Int? {
+  switch value {
+  case let intValue as Int:
+    return intValue
+  case let int64Value as Int64:
+    return Int(int64Value)
+  case let number as NSNumber:
+    return number.intValue
+  default:
+    return nil
+  }
 }
 
 private func makeSuccessEnvelope(id: String, result: Any) -> [String: Any] {

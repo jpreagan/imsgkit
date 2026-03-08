@@ -13,8 +13,7 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
   #expect(
     chats[0]
       == ChatSummary(
-        chatID: 11,
-        chatGUID: "group-guid",
+        id: 11,
         service: "iMessage",
         identifier: "chat123",
         label: "+12125550101, +12125550102",
@@ -28,8 +27,7 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
   #expect(
     chats[1]
       == ChatSummary(
-        chatID: 10,
-        chatGUID: "direct-guid",
+        id: 10,
         service: "iMessage",
         identifier: "+12125550100",
         label: "+12125550100",
@@ -43,8 +41,7 @@ func listReturnsRawChatsSortedByNewestMessage() throws {
   #expect(
     chats[2]
       == ChatSummary(
-        chatID: 12,
-        chatGUID: "named-group-guid",
+        id: 12,
         service: "iMessage",
         identifier: "chat456",
         label: "Project Thread",
@@ -86,7 +83,7 @@ func listUsesContactLabelsWhenLookupIsAvailable() throws {
 func listRespectsLimit() throws {
   let dbURL = try makeChatListTestDatabase()
   let chats = try ChatListQuery.list(dbPath: dbURL.path, limit: 2)
-  #expect(chats.map(\.chatID) == [11, 10])
+  #expect(chats.map(\.id) == [11, 10])
 }
 
 @Test

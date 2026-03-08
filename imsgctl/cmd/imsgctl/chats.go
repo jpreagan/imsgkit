@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jpreagan/imsgkit/imsgctl/internal/localtransport"
@@ -29,7 +30,7 @@ func newChatsCommand() *cobra.Command {
 
 	flags := cmd.Flags()
 	flags.StringVar(&dbPath, "db", defaultChatDBPath, "path to Messages chat.db")
-	flags.BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	flags.BoolVar(&jsonOutput, "json", false, "emit JSONL output")
 	flags.IntVar(&limit, "limit", 20, "maximum chats to return")
 
 	return cmd
@@ -57,14 +58,22 @@ func runChats(cmd *cobra.Command, dbPath string, jsonOutput bool, limit int) err
 	}
 
 	if jsonOutput {
-		if err := output.WriteJSON(cmd.OutOrStdout(), chats); err != nil {
-			return &exitCodeError{code: 1, err: fmt.Errorf("write json: %w", err)}
+		for _, chat := range chats {
+			if err := output.WriteJSONLine(cmd.OutOrStdout(), chat); err != nil {
+				return &exitCodeError{code: 1, err: fmt.Errorf("write json: %w", err)}
+			}
 		}
 		return nil
 	}
 
 	for _, chat := range chats {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%d] %s last=%s\n", chat.ChatID, chat.Label, formatLastMessage(chat))
+		_, _ = fmt.Fprintf(
+			cmd.OutOrStdout(),
+			"[%d] %s last=%s\n",
+			chat.ID,
+			formatChatName(chat),
+			formatLastMessage(chat),
+		)
 	}
 
 	return nil
@@ -76,4 +85,25 @@ func formatLastMessage(chat protocol.ChatSummary) string {
 	}
 
 	return *chat.LastMessageAt
+}
+
+func formatChatName(chat protocol.ChatSummary) string {
+	label := strings.TrimSpace(chat.Label)
+	identifier := strings.TrimSpace(chat.Identifier)
+
+	switch {
+	case label == "":
+		if identifier == "" {
+			return "-"
+		}
+		return fmt.Sprintf(" (%s)", identifier)
+	case identifier == "":
+		return label
+	case label == identifier:
+		return identifier
+	case strings.Contains(label, identifier):
+		return label
+	default:
+		return fmt.Sprintf("%s (%s)", label, identifier)
+	}
 }

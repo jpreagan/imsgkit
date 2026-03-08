@@ -9,9 +9,10 @@ const (
 	KindRequest  = "request"
 	KindResponse = "response"
 
-	MethodHandshake = "Handshake"
-	MethodHealth    = "Health"
-	MethodListChats = "ListChats"
+	MethodHandshake  = "Handshake"
+	MethodHealth     = "Health"
+	MethodListChats  = "ListChats"
+	MethodGetHistory = "GetHistory"
 )
 
 type Envelope struct {
@@ -60,9 +61,14 @@ type ListChatsParams struct {
 	Limit int `json:"limit"`
 }
 
+type GetHistoryParams struct {
+	ChatID int64  `json:"chat_id"`
+	Limit  int    `json:"limit"`
+	Before *int64 `json:"before,omitempty"`
+}
+
 type ChatSummary struct {
-	ChatID           int64    `json:"chat_id"`
-	ChatGUID         string   `json:"chat_guid"`
+	ID               int64    `json:"id"`
 	Service          string   `json:"service"`
 	Identifier       string   `json:"identifier"`
 	Label            string   `json:"label"`
@@ -71,6 +77,44 @@ type ChatSummary struct {
 	Participants     []string `json:"participants"`
 	LastMessageAt    *string  `json:"last_message_at"`
 	MessageCount     int      `json:"message_count"`
+}
+
+type ChatMessage struct {
+	ID                   int64            `json:"id"`
+	ChatID               int64            `json:"chat_id"`
+	GUID                 string           `json:"guid"`
+	ReplyToGUID          *string          `json:"reply_to_guid"`
+	ThreadOriginatorGUID *string          `json:"thread_originator_guid"`
+	Sender               string           `json:"sender"`
+	SenderName           *string          `json:"sender_name"`
+	SenderLabel          *string          `json:"sender_label"`
+	FromMe               bool             `json:"from_me"`
+	Text                 string           `json:"text"`
+	CreatedAt            *string          `json:"created_at"`
+	Service              string           `json:"service"`
+	DestinationCallerID  *string          `json:"destination_caller_id"`
+	Attachments          []AttachmentMeta `json:"attachments"`
+	Reactions            []ReactionMeta   `json:"reactions"`
+}
+
+type AttachmentMeta struct {
+	Filename     string `json:"filename"`
+	TransferName string `json:"transfer_name"`
+	UTI          string `json:"uti"`
+	MimeType     string `json:"mime_type"`
+	TotalBytes   int64  `json:"total_bytes"`
+	IsSticker    bool   `json:"is_sticker"`
+	OriginalPath string `json:"original_path"`
+	Missing      bool   `json:"missing"`
+}
+
+type ReactionMeta struct {
+	ID        int64   `json:"id"`
+	Type      string  `json:"type"`
+	Emoji     string  `json:"emoji"`
+	Sender    string  `json:"sender"`
+	FromMe    bool    `json:"is_from_me"`
+	CreatedAt *string `json:"created_at"`
 }
 
 func Encode(value any) (json.RawMessage, error) {

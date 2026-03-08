@@ -2,8 +2,7 @@ import Foundation
 import SQLite3
 
 public struct ChatSummary: Sendable, Equatable {
-  public let chatID: Int64
-  public let chatGUID: String
+  public let id: Int64
   public let service: String
   public let identifier: String
   public let label: String
@@ -14,8 +13,7 @@ public struct ChatSummary: Sendable, Equatable {
   public let messageCount: Int
 
   public init(
-    chatID: Int64,
-    chatGUID: String,
+    id: Int64,
     service: String,
     identifier: String,
     label: String,
@@ -25,8 +23,7 @@ public struct ChatSummary: Sendable, Equatable {
     lastMessageAt: String?,
     messageCount: Int
   ) {
-    self.chatID = chatID
-    self.chatGUID = chatGUID
+    self.id = id
     self.service = service
     self.identifier = identifier
     self.label = label
@@ -39,8 +36,7 @@ public struct ChatSummary: Sendable, Equatable {
 
   public var jsonObject: [String: Any] {
     [
-      "chat_id": chatID,
-      "chat_guid": chatGUID,
+      "id": id,
       "service": service,
       "identifier": identifier,
       "label": label,
@@ -50,36 +46,6 @@ public struct ChatSummary: Sendable, Equatable {
       "last_message_at": lastMessageAt ?? NSNull(),
       "message_count": messageCount,
     ]
-  }
-}
-
-public struct ResolvedChatContact: Sendable, Equatable {
-  public let name: String
-  public let label: String
-
-  public init(name: String, label: String) {
-    self.name = name
-    self.label = label
-  }
-}
-
-public typealias ContactLookup = @Sendable (String) -> ResolvedChatContact?
-
-enum MessagesStoreError: Error, CustomStringConvertible {
-  case invalidLimit(Int)
-  case openDatabase(String)
-  case prepareStatement(String)
-  case stepStatement(String)
-
-  var description: String {
-    switch self {
-    case .invalidLimit:
-      return "limit must be zero or greater"
-    case .openDatabase(let message),
-      .prepareStatement(let message),
-      .stepStatement(let message):
-      return message
-    }
   }
 }
 
@@ -245,8 +211,7 @@ public enum ChatListQuery {
     }
 
     return ChatSummary(
-      chatID: row.chatID,
-      chatGUID: row.chatGUID,
+      id: row.chatID,
       service: row.service,
       identifier: row.identifier,
       label: label,
@@ -283,52 +248,4 @@ public enum ChatListQuery {
       contact?.label ?? identifier
     }
   }
-
-  private static func formatMessagesTimestamp(_ timestamp: Int64?) -> String? {
-    guard let timestamp else {
-      return nil
-    }
-
-    let date = Date(timeIntervalSinceReferenceDate: Double(timestamp) / 1_000_000_000)
-    let formatter = ISO8601DateFormatter()
-    formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: date)
-  }
-}
-
-private func withReadOnlyDatabase<T>(
-  at path: String,
-  body: (OpaquePointer) throws -> T
-) throws -> T {
-  var database: OpaquePointer?
-  guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-    throw MessagesStoreError.openDatabase(lastSQLiteError(from: database))
-  }
-  defer {
-    sqlite3_close(database)
-  }
-
-  return try body(database!)
-}
-
-private func sqliteText(_ statement: OpaquePointer?, column: Int32) -> String {
-  guard let pointer = sqlite3_column_text(statement, column) else {
-    return ""
-  }
-  return String(cString: pointer)
-}
-
-private func sqliteValue(_ statement: OpaquePointer?, column: Int32) -> Int64? {
-  guard sqlite3_column_type(statement, column) != SQLITE_NULL else {
-    return nil
-  }
-  return sqlite3_column_int64(statement, column)
-}
-
-private func lastSQLiteError(from database: OpaquePointer?) -> String {
-  guard let message = sqlite3_errmsg(database) else {
-    return "sqlite error"
-  }
-  return String(cString: message)
 }

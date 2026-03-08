@@ -23,7 +23,19 @@ public enum ContactLookupResolver {
     do {
       let directory = try ContactDirectory(store: store)
       return { identifier in
-        directory.resolve(identifier: identifier)
+        guard let contact = directory.resolve(identifier: identifier) else {
+          return nil
+        }
+
+        let displayIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayIdentifier.isEmpty else {
+          return contact
+        }
+
+        return ResolvedContact(
+          name: contact.name,
+          label: "\(contact.name) (\(displayIdentifier))"
+        )
       }
     } catch {
       return { _ in nil }

@@ -10,4 +10,5 @@ public enum ProtocolConstants {
   public static let handshakeMethod = "Handshake"
   public static let healthMethod = "Health"
   public static let listChatsMethod = "ListChats"
+  public static let getHistoryMethod = "GetHistory"
 }

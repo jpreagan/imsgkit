@@ -85,6 +85,19 @@ func (c *Client) ListChats(ctx context.Context, limit int) ([]protocol.ChatSumma
 	})
 }
 
+func (c *Client) GetHistory(
+	ctx context.Context,
+	chatID int64,
+	limit int,
+	before *int64,
+) ([]protocol.ChatMessage, error) {
+	return call[[]protocol.ChatMessage](ctx, c, protocol.MethodGetHistory, protocol.GetHistoryParams{
+		ChatID: chatID,
+		Limit:  limit,
+		Before: before,
+	})
+}
+
 func call[T any](ctx context.Context, c *Client, method string, params any) (T, error) {
 	var zero T
 

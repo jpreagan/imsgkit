@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/jpreagan/imsgkit/imsgctl/internal/localtransport"
@@ -15,6 +16,7 @@ const historyTimeout = 10 * time.Second
 
 func newHistoryCommand() *cobra.Command {
 	var dbPath string
+	var showAttachments bool
 	var jsonOutput bool
 	var chatID int64
 	var limit int
@@ -25,12 +27,13 @@ func newHistoryCommand() *cobra.Command {
 		Short: "List messages from a chat",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHistory(cmd, dbPath, jsonOutput, chatID, limit, before)
+			return runHistory(cmd, dbPath, jsonOutput, showAttachments, chatID, limit, before)
 		},
 	}
 
 	flags := cmd.Flags()
 	flags.StringVar(&dbPath, "db", defaultChatDBPath, "path to Messages chat.db")
+	flags.BoolVar(&showAttachments, "attachments", false, "include attachment metadata in text output")
 	flags.BoolVar(&jsonOutput, "json", false, "emit JSONL output")
 	flags.Int64Var(&chatID, "chat-id", 0, "chat identifier from imsgctl chats")
 	flags.IntVar(&limit, "limit", 50, "maximum messages to return")
@@ -44,6 +47,7 @@ func runHistory(
 	cmd *cobra.Command,
 	dbPath string,
 	jsonOutput bool,
+	showAttachments bool,
 	chatID int64,
 	limit int,
 	before int64,
@@ -98,12 +102,25 @@ func runHistory(
 			message.Text,
 		)
 		if len(message.Attachments) > 0 {
-			_, _ = fmt.Fprintf(
-				cmd.OutOrStdout(),
-				"  (%d attachment%s)\n",
-				len(message.Attachments),
-				pluralSuffix(len(message.Attachments)),
-			)
+			if showAttachments {
+				for _, attachment := range message.Attachments {
+					_, _ = fmt.Fprintf(
+						cmd.OutOrStdout(),
+						"  attachment: name=%s mime=%s missing=%t path=%s\n",
+						formatAttachmentName(attachment),
+						attachment.MimeType,
+						attachment.Missing,
+						attachment.OriginalPath,
+					)
+				}
+			} else {
+				_, _ = fmt.Fprintf(
+					cmd.OutOrStdout(),
+					"  (%d attachment%s)\n",
+					len(message.Attachments),
+					pluralSuffix(len(message.Attachments)),
+				)
+			}
 		}
 	}
 
@@ -149,4 +166,18 @@ func pluralSuffix(count int) string {
 	}
 
 	return "s"
+}
+
+func formatAttachmentName(attachment protocol.AttachmentMeta) string {
+	if attachment.TransferName != "" {
+		return attachment.TransferName
+	}
+	if attachment.Filename != "" {
+		return filepath.Base(attachment.Filename)
+	}
+	if attachment.OriginalPath != "" {
+		return filepath.Base(attachment.OriginalPath)
+	}
+
+	return "-"
 }

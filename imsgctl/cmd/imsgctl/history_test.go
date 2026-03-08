@@ -41,3 +41,25 @@ func TestFormatSenderLabelUsesSenderLabelForInboundMessages(t *testing.T) {
 		t.Fatalf("formatSenderLabel() = %q, want %q", got, label)
 	}
 }
+
+func TestFormatAttachmentNamePrefersTransferName(t *testing.T) {
+	attachment := protocol.AttachmentMeta{
+		Filename:     "~/Library/Messages/Attachments/test/photo.heic",
+		TransferName: "photo.heic",
+		OriginalPath: "/Users/test/Library/Messages/Attachments/test/photo.heic",
+	}
+
+	if got := formatAttachmentName(attachment); got != "photo.heic" {
+		t.Fatalf("formatAttachmentName() = %q, want %q", got, "photo.heic")
+	}
+}
+
+func TestFormatAttachmentNameFallsBackToFilenameBase(t *testing.T) {
+	attachment := protocol.AttachmentMeta{
+		Filename: "~/Library/Messages/Attachments/test/photo.heic",
+	}
+
+	if got := formatAttachmentName(attachment); got != "photo.heic" {
+		t.Fatalf("formatAttachmentName() = %q, want %q", got, "photo.heic")
+	}
+}

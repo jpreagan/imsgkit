@@ -62,9 +62,10 @@ type ListChatsParams struct {
 }
 
 type GetHistoryParams struct {
-	ChatID int64  `json:"chat_id"`
-	Limit  int    `json:"limit"`
-	Before *int64 `json:"before,omitempty"`
+	ChatID int64   `json:"chat_id"`
+	Limit  int     `json:"limit"`
+	Start  *string `json:"start,omitempty"`
+	End    *string `json:"end,omitempty"`
 }
 
 type ChatSummary struct {

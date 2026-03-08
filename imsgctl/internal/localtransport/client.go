@@ -89,12 +89,14 @@ func (c *Client) GetHistory(
 	ctx context.Context,
 	chatID int64,
 	limit int,
-	before *int64,
+	start *string,
+	end *string,
 ) ([]protocol.ChatMessage, error) {
 	return call[[]protocol.ChatMessage](ctx, c, protocol.MethodGetHistory, protocol.GetHistoryParams{
 		ChatID: chatID,
 		Limit:  limit,
-		Before: before,
+		Start:  start,
+		End:    end,
 	})
 }
 

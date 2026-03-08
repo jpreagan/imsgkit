@@ -111,6 +111,10 @@ func formatMessagesTimestamp(_ timestamp: Int64?) -> String? {
   return formatter.string(from: date)
 }
 
+func messagesTimestamp(from date: Date) -> Int64 {
+  Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
+}
+
 func lastSQLiteError(from database: OpaquePointer?) -> String {
   guard let message = sqlite3_errmsg(database) else {
     return "sqlite error"

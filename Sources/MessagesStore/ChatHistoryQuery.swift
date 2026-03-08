@@ -160,7 +160,8 @@ public enum ChatHistoryQuery {
     dbPath: String = MessagesHealthProbe.defaultChatDBPath,
     chatID: Int64,
     limit: Int = defaultLimit,
-    beforeMessageID: Int64? = nil,
+    startDate: Date? = nil,
+    endDate: Date? = nil,
     contactLookup: ContactLookup = { _ in nil }
   ) throws -> [ChatMessage] {
     if chatID <= 0 {
@@ -168,9 +169,6 @@ public enum ChatHistoryQuery {
     }
     if limit < 0 {
       throw MessagesStoreError.invalidLimit(limit)
-    }
-    if let beforeMessageID, beforeMessageID <= 0 {
-      throw MessagesStoreError.invalidBeforeMessageID(beforeMessageID)
     }
     guard limit > 0 else {
       return []
@@ -182,7 +180,8 @@ public enum ChatHistoryQuery {
         database: database,
         chatID: chatID,
         limit: limit,
-        beforeMessageID: beforeMessageID
+        startDate: startDate,
+        endDate: endDate
       )
       return rows.map {
         makeMessage(database: database, row: $0, contactLookup: contactLookup)
@@ -216,9 +215,12 @@ public enum ChatHistoryQuery {
     database: OpaquePointer,
     chatID: Int64,
     limit: Int,
-    beforeMessageID: Int64?
+    startDate: Date?,
+    endDate: Date?
   ) throws -> [MessageRow] {
     try validateModernSchema(database: database)
+    let startTimestamp = startDate.map(messagesTimestamp(from:))
+    let endTimestamp = endDate.map(messagesTimestamp(from:))
 
     let sql = """
       SELECT
@@ -242,22 +244,8 @@ public enum ChatHistoryQuery {
         AND COALESCE(m.item_type, 0) = 0
         AND COALESCE(m.is_system_message, 0) = 0
         AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)
-        AND (
-          ? IS NULL
-          OR cmj.message_date < (
-            SELECT older.message_date
-            FROM chat_message_join older
-            WHERE older.chat_id = ? AND older.message_id = ?
-          )
-          OR (
-            cmj.message_date = (
-              SELECT older.message_date
-              FROM chat_message_join older
-              WHERE older.chat_id = ? AND older.message_id = ?
-            )
-            AND m.ROWID < ?
-          )
-        )
+        AND (? IS NULL OR cmj.message_date >= ?)
+        AND (? IS NULL OR cmj.message_date < ?)
       ORDER BY cmj.message_date DESC, m.ROWID DESC
       LIMIT ?
       """
@@ -271,13 +259,11 @@ public enum ChatHistoryQuery {
     }
 
     sqlite3_bind_int64(statement, 1, chatID)
-    bindNullableInt64(statement, index: 2, value: beforeMessageID)
-    sqlite3_bind_int64(statement, 3, chatID)
-    bindNullableInt64(statement, index: 4, value: beforeMessageID)
-    sqlite3_bind_int64(statement, 5, chatID)
-    bindNullableInt64(statement, index: 6, value: beforeMessageID)
-    bindNullableInt64(statement, index: 7, value: beforeMessageID)
-    sqlite3_bind_int64(statement, 8, Int64(limit))
+    bindNullableInt64(statement, index: 2, value: startTimestamp)
+    bindNullableInt64(statement, index: 3, value: startTimestamp)
+    bindNullableInt64(statement, index: 4, value: endTimestamp)
+    bindNullableInt64(statement, index: 5, value: endTimestamp)
+    sqlite3_bind_int64(statement, 6, Int64(limit))
 
     var rows: [MessageRow] = []
     while true {

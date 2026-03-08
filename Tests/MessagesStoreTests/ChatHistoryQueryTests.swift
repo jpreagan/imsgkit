@@ -176,6 +176,21 @@ func historyListRejectsInvalidChatID() throws {
   }
 }
 
+@Test
+func historyListRejectsLegacyMessageSchema() throws {
+  let dbURL = try makeLegacyChatHistoryTestDatabase()
+
+  do {
+    _ = try ChatHistoryQuery.list(dbPath: dbURL.path, chatID: 10, limit: 10)
+    Issue.record("expected legacy schema to throw")
+  } catch let error as CustomStringConvertible {
+    #expect(
+      error.description
+        == "history requires a modern Messages chat.db schema; missing message columns: associated_message_type, thread_originator_guid"
+    )
+  }
+}
+
 private func makeChatHistoryTestDatabase() throws -> URL {
   let tempDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -226,7 +241,8 @@ private func makeChatHistoryTestDatabase() throws -> URL {
         is_system_message INTEGER DEFAULT 0,
         item_type INTEGER DEFAULT 0,
         associated_message_guid TEXT,
-        associated_message_type INTEGER
+        associated_message_type INTEGER,
+        thread_originator_guid TEXT
       );
       """
   )
@@ -285,14 +301,14 @@ private func makeChatHistoryTestDatabase() throws -> URL {
     database,
     sql: """
       INSERT INTO message (
-        ROWID, guid, text, attributedBody, service, destination_caller_id, handle_id, date, is_from_me, is_system_message, item_type, associated_message_guid, associated_message_type
+        ROWID, guid, text, attributedBody, service, destination_caller_id, handle_id, date, is_from_me, is_system_message, item_type, associated_message_guid, associated_message_type, thread_originator_guid
       ) VALUES
-        (100, 'message-100', 'first from jane', NULL, 'iMessage', '+12125559999', 1, 1000000000, 0, 0, 0, NULL, NULL),
-        (101, 'message-101', NULL, X'012B0D7265706C792066726F6D206D658684', 'iMessage', '+12125559999', 1, 2000000000, 1, 0, 0, NULL, NULL),
-        (102, 'message-102', 'tapback should hide', NULL, 'iMessage', '+12125559999', 1, 2500000000, 0, 0, 0, 'p:0/message-101', 2000),
-        (103, 'message-103', 'latest from jane', NULL, 'iMessage', '+12125559999', 1, 3000000000, 0, 0, 0, NULL, NULL),
-        (104, 'message-104', 'system should hide', NULL, 'iMessage', '+12125559999', 1, 3500000000, 0, 1, 0, NULL, NULL),
-        (200, 'message-200', 'other chat message', NULL, 'iMessage', '+12125558888', 2, 4000000000, 0, 0, 0, NULL, NULL);
+        (100, 'message-100', 'first from jane', NULL, 'iMessage', '+12125559999', 1, 1000000000, 0, 0, 0, NULL, NULL, NULL),
+        (101, 'message-101', NULL, X'012B0D7265706C792066726F6D206D658684', 'iMessage', '+12125559999', 1, 2000000000, 1, 0, 0, NULL, NULL, NULL),
+        (102, 'message-102', 'tapback should hide', NULL, 'iMessage', '+12125559999', 1, 2500000000, 0, 0, 0, 'p:0/message-101', 2000, NULL),
+        (103, 'message-103', 'latest from jane', NULL, 'iMessage', '+12125559999', 1, 3000000000, 0, 0, 0, NULL, NULL, NULL),
+        (104, 'message-104', 'system should hide', NULL, 'iMessage', '+12125559999', 1, 3500000000, 0, 1, 0, NULL, NULL, NULL),
+        (200, 'message-200', 'other chat message', NULL, 'iMessage', '+12125558888', 2, 4000000000, 0, 0, 0, NULL, NULL, NULL);
       """
   )
   try execute(
@@ -321,6 +337,103 @@ private func makeChatHistoryTestDatabase() throws -> URL {
     sql: """
       INSERT INTO message_attachment_join (message_id, attachment_id) VALUES
         (101, 1);
+      """
+  )
+
+  return dbURL
+}
+
+private func makeLegacyChatHistoryTestDatabase() throws -> URL {
+  let tempDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+  let dbURL = tempDirectory.appendingPathComponent("chat.db")
+  var database: OpaquePointer?
+  #expect(sqlite3_open(dbURL.path, &database) == SQLITE_OK)
+  defer {
+    sqlite3_close(database)
+  }
+
+  try execute(
+    database,
+    sql: """
+      CREATE TABLE handle (
+        ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL
+      );
+      """
+  )
+  try execute(
+    database,
+    sql: """
+      CREATE TABLE message (
+        ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid TEXT NOT NULL,
+        text TEXT,
+        attributedBody BLOB,
+        service TEXT,
+        destination_caller_id TEXT,
+        handle_id INTEGER DEFAULT 0,
+        date INTEGER,
+        is_from_me INTEGER DEFAULT 0,
+        is_system_message INTEGER DEFAULT 0,
+        item_type INTEGER DEFAULT 0,
+        associated_message_guid TEXT
+      );
+      """
+  )
+  try execute(
+    database,
+    sql: """
+      CREATE TABLE chat_message_join (
+        chat_id INTEGER NOT NULL,
+        message_id INTEGER NOT NULL,
+        message_date INTEGER DEFAULT 0
+      );
+      """
+  )
+  try execute(
+    database,
+    sql: """
+      CREATE TABLE attachment (
+        ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid TEXT NOT NULL,
+        filename TEXT,
+        uti TEXT,
+        mime_type TEXT,
+        transfer_name TEXT,
+        total_bytes INTEGER DEFAULT 0,
+        is_sticker INTEGER DEFAULT 0
+      );
+      """
+  )
+  try execute(
+    database,
+    sql: """
+      CREATE TABLE message_attachment_join (
+        message_id INTEGER NOT NULL,
+        attachment_id INTEGER NOT NULL
+      );
+      """
+  )
+  try execute(database, sql: "INSERT INTO handle (ROWID, id) VALUES (1, '+12125550100');")
+  try execute(
+    database,
+    sql: """
+      INSERT INTO message (
+        ROWID, guid, text, attributedBody, service, destination_caller_id, handle_id, date, is_from_me, is_system_message, item_type, associated_message_guid
+      ) VALUES
+        (100, 'message-100', 'first from jane', NULL, 'iMessage', '+12125559999', 1, 1000000000, 0, 0, 0, NULL),
+        (101, 'message-101', 'reply from me', NULL, 'iMessage', '+12125559999', 1, 2000000000, 1, 0, 0, NULL);
+      """
+  )
+  try execute(
+    database,
+    sql: """
+      INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES
+        (10, 100, 1000000000),
+        (10, 101, 2000000000);
       """
   )
 

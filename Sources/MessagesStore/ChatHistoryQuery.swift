@@ -218,48 +218,7 @@ public enum ChatHistoryQuery {
     limit: Int,
     beforeMessageID: Int64?
   ) throws -> [MessageRow] {
-    let hasAttributedBody = try databaseHasColumn(
-      database: database,
-      table: "message",
-      column: "attributedBody"
-    )
-    let hasDestinationCallerID = try databaseHasColumn(
-      database: database,
-      table: "message",
-      column: "destination_caller_id"
-    )
-    let hasAssociatedMessageType = try databaseHasColumn(
-      database: database,
-      table: "message",
-      column: "associated_message_type"
-    )
-    let hasAssociatedMessageGUID = try databaseHasColumn(
-      database: database,
-      table: "message",
-      column: "associated_message_guid"
-    )
-    let hasThreadOriginatorGUID = try databaseHasColumn(
-      database: database,
-      table: "message",
-      column: "thread_originator_guid"
-    )
-
-    let bodyColumn = hasAttributedBody ? "m.attributedBody" : "NULL"
-    let destinationCallerColumn =
-      hasDestinationCallerID ? "COALESCE(m.destination_caller_id, '')" : "''"
-    let associatedMessageGUIDColumn =
-      hasAssociatedMessageGUID ? "COALESCE(m.associated_message_guid, '')" : "''"
-    let associatedMessageTypeColumn =
-      hasAssociatedMessageType ? "m.associated_message_type" : "NULL"
-    let threadOriginatorGUIDColumn =
-      hasThreadOriginatorGUID ? "COALESCE(m.thread_originator_guid, '')" : "''"
-    let reactionFilter: String
-    if hasAssociatedMessageType {
-      reactionFilter =
-        "AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
-    } else {
-      reactionFilter = "AND m.associated_message_guid IS NULL"
-    }
+    try validateModernSchema(database: database)
 
     let sql = """
       SELECT
@@ -268,21 +227,21 @@ public enum ChatHistoryQuery {
         cmj.chat_id,
         COALESCE(m.service, ''),
         COALESCE(h.id, ''),
-        \(destinationCallerColumn),
+        COALESCE(m.destination_caller_id, ''),
         COALESCE(m.is_from_me, 0),
         COALESCE(m.text, ''),
-        \(bodyColumn),
+        m.attributedBody,
         cmj.message_date,
-        \(associatedMessageGUIDColumn),
-        \(associatedMessageTypeColumn),
-        \(threadOriginatorGUIDColumn)
+        COALESCE(m.associated_message_guid, ''),
+        m.associated_message_type,
+        COALESCE(m.thread_originator_guid, '')
       FROM chat_message_join cmj
       INNER JOIN message m ON m.ROWID = cmj.message_id
       LEFT JOIN handle h ON h.ROWID = m.handle_id
       WHERE cmj.chat_id = ?
         AND COALESCE(m.item_type, 0) = 0
         AND COALESCE(m.is_system_message, 0) = 0
-        \(reactionFilter)
+        AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)
         AND (
           ? IS NULL
           OR cmj.message_date < (
@@ -439,12 +398,6 @@ public enum ChatHistoryQuery {
     database: OpaquePointer,
     messageID: Int64
   ) -> [ChatMessage.Attachment] {
-    guard (try? databaseHasTable(database: database, table: "message_attachment_join")) == true,
-      (try? databaseHasTable(database: database, table: "attachment")) == true
-    else {
-      return []
-    }
-
     let sql = """
       SELECT
         COALESCE(a.filename, ''),
@@ -496,28 +449,6 @@ public enum ChatHistoryQuery {
     guard !row.messageGUID.isEmpty else {
       return []
     }
-    guard
-      (try? databaseHasColumn(
-        database: database,
-        table: "message",
-        column: "associated_message_type"
-      )) == true,
-      (try? databaseHasColumn(
-        database: database,
-        table: "message",
-        column: "associated_message_guid"
-      )) == true
-    else {
-      return []
-    }
-
-    let hasAttributedBody =
-      (try? databaseHasColumn(
-        database: database,
-        table: "message",
-        column: "attributedBody"
-      )) == true
-    let bodyColumn = hasAttributedBody ? "r.attributedBody" : "NULL"
     let sql = """
       SELECT
         r.ROWID,
@@ -526,7 +457,7 @@ public enum ChatHistoryQuery {
         COALESCE(r.is_from_me, 0),
         r.date,
         COALESCE(r.text, ''),
-        \(bodyColumn)
+        r.attributedBody
       FROM message r
       LEFT JOIN handle h ON r.handle_id = h.ROWID
       WHERE (
@@ -631,6 +562,32 @@ public enum ChatHistoryQuery {
     }
 
     return reactions
+  }
+
+  private static func validateModernSchema(database: OpaquePointer) throws {
+    let messageColumns = try databaseColumns(database: database, table: "message")
+    let requiredMessageColumns: Set<String> = [
+      "attributedBody",
+      "destination_caller_id",
+      "associated_message_guid",
+      "associated_message_type",
+      "thread_originator_guid",
+    ]
+    let missingMessageColumns = requiredMessageColumns.subtracting(messageColumns).sorted()
+    guard missingMessageColumns.isEmpty else {
+      throw MessagesStoreError.unsupportedSchema(
+        "history requires a modern Messages chat.db schema; missing message columns: \(missingMessageColumns.joined(separator: ", "))"
+      )
+    }
+
+    let tables = try databaseTables(database: database)
+    let requiredTables: Set<String> = ["attachment", "message_attachment_join"]
+    let missingTables = requiredTables.subtracting(tables).sorted()
+    guard missingTables.isEmpty else {
+      throw MessagesStoreError.unsupportedSchema(
+        "history requires a modern Messages chat.db schema; missing tables: \(missingTables.joined(separator: ", "))"
+      )
+    }
   }
 }
 

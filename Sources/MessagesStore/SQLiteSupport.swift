@@ -28,14 +28,6 @@ func sqliteText(_ statement: OpaquePointer?, column: Int32) -> String {
   return String(cString: pointer)
 }
 
-func sqliteOptionalText(_ statement: OpaquePointer?, column: Int32) -> String? {
-  guard sqlite3_column_type(statement, column) != SQLITE_NULL else {
-    return nil
-  }
-
-  return sqliteText(statement, column: column)
-}
-
 func sqliteBlobData(_ statement: OpaquePointer?, column: Int32) -> Data {
   guard sqlite3_column_type(statement, column) != SQLITE_NULL else {
     return Data()
@@ -61,7 +53,7 @@ func sqliteOptionalInt(_ statement: OpaquePointer?, column: Int32) -> Int? {
   return Int(value)
 }
 
-func databaseHasColumn(database: OpaquePointer, table: String, column: String) throws -> Bool {
+func databaseColumns(database: OpaquePointer, table: String) throws -> Set<String> {
   let sql = "PRAGMA table_info(\(table));"
 
   var statement: OpaquePointer?
@@ -72,21 +64,19 @@ func databaseHasColumn(database: OpaquePointer, table: String, column: String) t
     sqlite3_finalize(statement)
   }
 
+  var columns = Set<String>()
   while sqlite3_step(statement) == SQLITE_ROW {
-    if sqliteText(statement, column: 1) == column {
-      return true
-    }
+    columns.insert(sqliteText(statement, column: 1))
   }
 
-  return false
+  return columns
 }
 
-func databaseHasTable(database: OpaquePointer, table: String) throws -> Bool {
+func databaseTables(database: OpaquePointer) throws -> Set<String> {
   let sql = """
-    SELECT 1
+    SELECT name
     FROM sqlite_master
-    WHERE type = 'table' AND name = '\(table)'
-    LIMIT 1
+    WHERE type = 'table'
     """
 
   var statement: OpaquePointer?
@@ -97,7 +87,12 @@ func databaseHasTable(database: OpaquePointer, table: String) throws -> Bool {
     sqlite3_finalize(statement)
   }
 
-  return sqlite3_step(statement) == SQLITE_ROW
+  var tables = Set<String>()
+  while sqlite3_step(statement) == SQLITE_ROW {
+    tables.insert(sqliteText(statement, column: 0))
+  }
+
+  return tables
 }
 
 func sqliteBindText(_ statement: OpaquePointer?, index: Int32, value: String) {

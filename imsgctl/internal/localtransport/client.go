@@ -100,6 +100,54 @@ func (c *Client) GetHistory(
 	})
 }
 
+func (c *Client) Watch(
+	ctx context.Context,
+	params protocol.WatchParams,
+	handle func(protocol.WatchEvent) error,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	requestID, err := c.sendRequest(protocol.MethodWatch, params)
+	if err != nil {
+		return err
+	}
+
+	if _, err := readResponse[struct{}](ctx, c, requestID); err != nil {
+		return err
+	}
+
+	for {
+		envelope, err := c.readEnvelope(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+
+		if envelope.Kind != protocol.KindEvent || envelope.Event == nil {
+			return fmt.Errorf("unexpected stream envelope")
+		}
+		if envelope.Event.RequestID != requestID {
+			return fmt.Errorf("event request id mismatch: want %s got %s", requestID, envelope.Event.RequestID)
+		}
+
+		event, err := protocol.Decode[protocol.WatchEvent](envelope.Event.Payload)
+		if err != nil {
+			return fmt.Errorf("decode event: %w", err)
+		}
+
+		if err := handle(event); err != nil {
+			return err
+		}
+	}
+}
+
 func call[T any](ctx context.Context, c *Client, method string, params any) (T, error) {
 	var zero T
 
@@ -110,12 +158,21 @@ func call[T any](ctx context.Context, c *Client, method string, params any) (T, 
 		return zero, err
 	}
 
+	requestID, err := c.sendRequest(method, params)
+	if err != nil {
+		return zero, err
+	}
+
+	return readResponse[T](ctx, c, requestID)
+}
+
+func (c *Client) sendRequest(method string, params any) (string, error) {
 	c.nextID++
 	requestID := fmt.Sprintf("%d", c.nextID)
 
 	rawParams, err := protocol.Encode(params)
 	if err != nil {
-		return zero, fmt.Errorf("encode params: %w", err)
+		return "", fmt.Errorf("encode params: %w", err)
 	}
 
 	if err := protocol.WriteEnvelope(c.stdin, protocol.Envelope{
@@ -126,9 +183,42 @@ func call[T any](ctx context.Context, c *Client, method string, params any) (T, 
 			Params: rawParams,
 		},
 	}); err != nil {
-		return zero, fmt.Errorf("write request: %w", err)
+		return "", fmt.Errorf("write request: %w", err)
 	}
 
+	return requestID, nil
+}
+
+func readResponse[T any](ctx context.Context, c *Client, requestID string) (T, error) {
+	var zero T
+
+	envelope, err := c.readEnvelope(ctx)
+	if err != nil {
+		return zero, err
+	}
+
+	if envelope.Kind != protocol.KindResponse || envelope.Response == nil {
+		return zero, fmt.Errorf("unexpected response envelope")
+	}
+
+	response := envelope.Response
+	if response.Error != nil {
+		return zero, fmt.Errorf("%s: %s", response.Error.Code, response.Error.Message)
+	}
+
+	if response.ID != requestID {
+		return zero, fmt.Errorf("response id mismatch: want %s got %s", requestID, response.ID)
+	}
+
+	value, err := protocol.Decode[T](response.Result)
+	if err != nil {
+		return zero, fmt.Errorf("decode response: %w", err)
+	}
+
+	return value, nil
+}
+
+func (c *Client) readEnvelope(ctx context.Context) (protocol.Envelope, error) {
 	type result struct {
 		envelope protocol.Envelope
 		err      error
@@ -142,30 +232,12 @@ func call[T any](ctx context.Context, c *Client, method string, params any) (T, 
 
 	select {
 	case <-ctx.Done():
+		var zero protocol.Envelope
 		return zero, ctx.Err()
 	case outcome := <-readDone:
 		if outcome.err != nil {
-			return zero, fmt.Errorf("read response: %w", outcome.err)
+			return protocol.Envelope{}, fmt.Errorf("read response: %w", outcome.err)
 		}
-
-		if outcome.envelope.Kind != protocol.KindResponse || outcome.envelope.Response == nil {
-			return zero, fmt.Errorf("unexpected response envelope")
-		}
-
-		response := outcome.envelope.Response
-		if response.Error != nil {
-			return zero, fmt.Errorf("%s: %s", response.Error.Code, response.Error.Message)
-		}
-
-		if response.ID != requestID {
-			return zero, fmt.Errorf("response id mismatch: want %s got %s", requestID, response.ID)
-		}
-
-		value, err := protocol.Decode[T](response.Result)
-		if err != nil {
-			return zero, fmt.Errorf("decode response: %w", err)
-		}
-
-		return value, nil
+		return outcome.envelope, nil
 	}
 }

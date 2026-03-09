@@ -8,17 +8,20 @@ const (
 
 	KindRequest  = "request"
 	KindResponse = "response"
+	KindEvent    = "event"
 
 	MethodHandshake  = "Handshake"
 	MethodHealth     = "Health"
 	MethodListChats  = "ListChats"
 	MethodGetHistory = "GetHistory"
+	MethodWatch      = "Watch"
 )
 
 type Envelope struct {
 	Kind     string    `json:"kind"`
 	Request  *Request  `json:"request,omitempty"`
 	Response *Response `json:"response,omitempty"`
+	Event    *Event    `json:"event,omitempty"`
 }
 
 type Request struct {
@@ -36,6 +39,11 @@ type Response struct {
 type RPCError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+type Event struct {
+	RequestID string          `json:"request_id"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 type HandshakeResponse struct {
@@ -66,6 +74,14 @@ type GetHistoryParams struct {
 	Limit  int     `json:"limit"`
 	Start  *string `json:"start,omitempty"`
 	End    *string `json:"end,omitempty"`
+}
+
+type WatchParams struct {
+	ChatID               *int64  `json:"chat_id,omitempty"`
+	Start                *string `json:"start,omitempty"`
+	End                  *string `json:"end,omitempty"`
+	DebounceMilliseconds int     `json:"debounce_milliseconds"`
+	IncludeReactions     bool    `json:"include_reactions"`
 }
 
 type ChatSummary struct {
@@ -116,6 +132,29 @@ type ReactionMeta struct {
 	Sender    string  `json:"sender"`
 	FromMe    bool    `json:"is_from_me"`
 	CreatedAt *string `json:"created_at"`
+}
+
+type WatchEvent struct {
+	Event    string         `json:"event"`
+	Message  *ChatMessage   `json:"message,omitempty"`
+	Reaction *ReactionEvent `json:"reaction,omitempty"`
+}
+
+type ReactionEvent struct {
+	ID                  int64   `json:"id"`
+	GUID                string  `json:"guid"`
+	ChatID              int64   `json:"chat_id"`
+	TargetGUID          string  `json:"target_guid"`
+	Sender              string  `json:"sender"`
+	SenderName          *string `json:"sender_name"`
+	SenderLabel         *string `json:"sender_label"`
+	FromMe              bool    `json:"from_me"`
+	Type                string  `json:"type"`
+	Emoji               string  `json:"emoji"`
+	Action              string  `json:"action"`
+	CreatedAt           *string `json:"created_at"`
+	Service             string  `json:"service"`
+	DestinationCallerID *string `json:"destination_caller_id"`
 }
 
 func Encode(value any) (json.RawMessage, error) {

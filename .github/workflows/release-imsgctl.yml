@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: imsgctl/go.mod
+          cache-dependency-path: imsgctl/go.sum
 
       - name: Derive release variables
         run: |
@@ -31,11 +32,15 @@ jobs:
           echo "RELEASE_TAG_ENCODED=${RELEASE_TAG//\//%2F}" >> "$GITHUB_ENV"
 
       - name: Build release artifacts
-        working-directory: imsgctl
+        uses: goreleaser/goreleaser-action@v6
         env:
           GORELEASER_CURRENT_TAG: ${{ env.VERSION }}
           RELEASE_TAG_ENCODED: ${{ env.RELEASE_TAG_ENCODED }}
-        run: goreleaser release --clean
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          workdir: imsgctl
+          args: release --clean
 
       - name: Create or update GitHub release
         env:

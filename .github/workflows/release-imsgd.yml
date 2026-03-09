@@ -14,9 +14,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13
+          - runner: macos-15-intel
             archive_suffix: darwin_amd64
-          - runner: macos-14
+          - runner: macos-15
             archive_suffix: darwin_arm64
     runs-on: ${{ matrix.runner }}
     env:

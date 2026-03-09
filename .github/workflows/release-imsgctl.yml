@@ -30,6 +30,7 @@ jobs:
           version="${RELEASE_TAG#imsgctl/}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG_ENCODED=${RELEASE_TAG//\//%2F}" >> "$GITHUB_ENV"
+          git tag -f "$version" "$GITHUB_SHA"
 
       - name: Build release artifacts
         uses: goreleaser/goreleaser-action@v6

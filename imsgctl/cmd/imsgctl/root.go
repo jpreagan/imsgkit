@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "dev"
-
 type exitCodeError struct {
 	code int
 	err  error

@@ -17,7 +17,7 @@ base_url="https://github.com/jpreagan/imsgkit/releases/download/${encoded_tag}"
 
 cat >"$output" <<EOF
 class Imsgd < Formula
-  desc "macOS helper for exposing read-only imsgkit message data"
+  desc "macOS helper for exposing imsgkit message data"
   homepage "https://github.com/jpreagan/imsgkit"
   version "${version}"
   license "MIT"

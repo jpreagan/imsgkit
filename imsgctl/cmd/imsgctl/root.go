@@ -66,6 +66,7 @@ func newRootCommand() *cobra.Command {
 		newChatsCommand(),
 		newHealthCommand(),
 		newHistoryCommand(),
+		newWatchCommand(),
 		newVersionCommand(),
 	)
 

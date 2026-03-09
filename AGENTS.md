@@ -63,6 +63,15 @@
 - The framed protocol version is separate from binary versions.
 - Bump the protocol version whenever the protocol surface or wire behavior changes.
 
+## Release
+
+- Release `imsgctl` with tags like `imsgctl/vX.Y.Z`.
+- Release `imsgd` with tags like `imsgd/vX.Y.Z`.
+- Do not use plain `vX.Y.Z` tags for repo releases.
+- `imsgctl` releases run through GoReleaser behind a thin wrapper workflow.
+- `imsgd` releases run through the dedicated macOS workflow and rendered Homebrew formula.
+- Both release tracks publish GitHub assets and update `jpreagan/homebrew-tap`.
+
 ## Changelog
 
 - Use Keep a Changelog format. User-facing changes only.

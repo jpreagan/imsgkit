@@ -1,0 +1,54 @@
+version: 2
+project_name: imsgctl
+dist: dist
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: imsgctl
+    main: ./cmd/imsgctl
+    binary: imsgctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: imsgctl
+    ids:
+      - imsgctl
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+brews:
+  - ids:
+      - imsgctl
+    name: imsgctl
+    homepage: https://github.com/jpreagan/imsgkit
+    description: Portable CLI for querying imsgkit message data
+    license: MIT
+    directory: Formula
+    url_template: "https://github.com/jpreagan/imsgkit/releases/download/{{ .Env.RELEASE_TAG_ENCODED }}/{{ .ArtifactName }}"
+    skip_upload: true
+    repository:
+      owner: jpreagan
+      name: homebrew-tap
+
+release:
+  disable: true
+
+changelog:
+  disable: true

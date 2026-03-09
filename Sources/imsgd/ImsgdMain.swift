@@ -3,8 +3,6 @@ import Foundation
 import ImsgProtocol
 import MessagesStore
 
-private let version = "dev"
-
 enum ImsgdError: Error, CustomStringConvertible {
   case invalidArguments(String)
   case invalidEnvelope
@@ -30,7 +28,7 @@ struct ImsgdMain {
     do {
       let options = try parseOptions(arguments: Array(CommandLine.arguments.dropFirst()))
       if options.showVersion {
-        FileHandle.standardOutput.write(Data("\(version)\n".utf8))
+        FileHandle.standardOutput.write(Data("\(BuildInfo.version)\n".utf8))
       } else {
         try serve(dbPath: options.dbPath)
       }
@@ -161,7 +159,7 @@ private func handleHandshake() -> [String: Any] {
   [
     "protocol_version": ProtocolConstants.protocolVersion,
     "server_name": ProtocolConstants.serverName,
-    "server_version": version,
+    "server_version": BuildInfo.version,
     "read_only": true,
     "capabilities": [
       "read_only",
@@ -187,7 +185,7 @@ private func handleHealth(dbPath: String) -> [String: Any] {
     "can_read_db": messagesHealth.canReadDB,
     "sqlite_open_ok": messagesHealth.sqliteOpenOK,
     "protocol_version": ProtocolConstants.protocolVersion,
-    "server_version": version,
+    "server_version": BuildInfo.version,
   ]
 }
 

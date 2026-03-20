@@ -9,6 +9,7 @@ import (
 	"github.com/jpreagan/imsgkit/imsgctl/internal/localtransport"
 	"github.com/jpreagan/imsgkit/imsgctl/internal/output"
 	"github.com/jpreagan/imsgkit/imsgctl/internal/protocol"
+	"github.com/jpreagan/imsgkit/imsgctl/internal/replica"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +17,7 @@ const historyTimeout = 10 * time.Second
 
 func newHistoryCommand() *cobra.Command {
 	var dbPath string
+	var replicaPath string
 	var showAttachments bool
 	var jsonOutput bool
 	var chatID int64
@@ -25,15 +27,25 @@ func newHistoryCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "history",
-		Short: "List messages from a chat",
+		Short: "List messages from a chat in the source or replica database",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHistory(cmd, dbPath, jsonOutput, showAttachments, chatID, limit, start, end)
+			return runHistory(
+				cmd,
+				dbPath,
+				replicaPath,
+				jsonOutput,
+				showAttachments,
+				chatID,
+				limit,
+				start,
+				end,
+			)
 		},
 	}
 
 	flags := cmd.Flags()
-	flags.StringVar(&dbPath, "db", defaultChatDBPath, "path to Messages chat.db")
+	addBackendFlags(flags, &dbPath, &replicaPath)
 	flags.BoolVar(&showAttachments, "attachments", false, "include attachment metadata in text output")
 	flags.BoolVar(&jsonOutput, "json", false, "emit JSONL output")
 	flags.Int64Var(&chatID, "chat-id", 0, "chat identifier from imsgctl chats")
@@ -48,6 +60,7 @@ func newHistoryCommand() *cobra.Command {
 func runHistory(
 	cmd *cobra.Command,
 	dbPath string,
+	replicaPath string,
 	jsonOutput bool,
 	showAttachments bool,
 	chatID int64,
@@ -62,17 +75,6 @@ func runHistory(
 		return &exitCodeError{code: 1, err: fmt.Errorf("limit must be zero or greater")}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
-	defer cancel()
-
-	client, err := localtransport.Start(ctx, localtransport.Options{
-		DBPath: dbPath,
-	})
-	if err != nil {
-		return &exitCodeError{code: 1, err: fmt.Errorf("get history failed: %w", err)}
-	}
-	defer client.Close()
-
 	var startFilter *string
 	if start != "" {
 		startFilter = &start
@@ -82,7 +84,29 @@ func runHistory(
 		endFilter = &end
 	}
 
-	messages, err := client.GetHistory(ctx, chatID, limit, startFilter, endFilter)
+	backend, err := resolveBackendOptions(dbPath, replicaPath)
+	if err != nil {
+		return &exitCodeError{code: 1, err: err}
+	}
+
+	var messages []protocol.ChatMessage
+	switch backend.kind {
+	case backendReplica:
+		messages, err = replica.GetHistory(backend.path, chatID, limit, startFilter, endFilter)
+	default:
+		ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
+		defer cancel()
+
+		client, startErr := localtransport.Start(ctx, localtransport.Options{
+			DBPath: backend.path,
+		})
+		if startErr != nil {
+			return &exitCodeError{code: 1, err: fmt.Errorf("get history failed: %w", startErr)}
+		}
+		defer client.Close()
+
+		messages, err = client.GetHistory(ctx, chatID, limit, startFilter, endFilter)
+	}
 	if err != nil {
 		return &exitCodeError{code: 1, err: fmt.Errorf("get history failed: %w", err)}
 	}

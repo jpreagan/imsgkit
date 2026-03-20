@@ -12,11 +12,13 @@ import (
 	"github.com/jpreagan/imsgkit/imsgctl/internal/localtransport"
 	"github.com/jpreagan/imsgkit/imsgctl/internal/output"
 	"github.com/jpreagan/imsgkit/imsgctl/internal/protocol"
+	"github.com/jpreagan/imsgkit/imsgctl/internal/replica"
 	"github.com/spf13/cobra"
 )
 
 func newWatchCommand() *cobra.Command {
 	var dbPath string
+	var replicaPath string
 	var chatID int64
 	var debounce string
 	var showAttachments bool
@@ -27,12 +29,13 @@ func newWatchCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Stream new messages from the Messages database",
+		Short: "Stream new messages from the source or replica database",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWatch(
 				cmd,
 				dbPath,
+				replicaPath,
 				chatID,
 				debounce,
 				showAttachments,
@@ -45,7 +48,7 @@ func newWatchCommand() *cobra.Command {
 	}
 
 	flags := cmd.Flags()
-	flags.StringVar(&dbPath, "db", defaultChatDBPath, "path to Messages chat.db")
+	addBackendFlags(flags, &dbPath, &replicaPath)
 	flags.Int64Var(&chatID, "chat-id", 0, "limit to a specific chat rowid")
 	flags.StringVar(&debounce, "debounce", "250ms", "debounce interval for filesystem events")
 	flags.BoolVar(&showAttachments, "attachments", false, "include attachment metadata in text output")
@@ -60,6 +63,7 @@ func newWatchCommand() *cobra.Command {
 func runWatch(
 	cmd *cobra.Command,
 	dbPath string,
+	replicaPath string,
 	chatID int64,
 	debounce string,
 	showAttachments bool,
@@ -83,14 +87,6 @@ func runWatch(
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client, err := localtransport.Start(ctx, localtransport.Options{
-		DBPath: dbPath,
-	})
-	if err != nil {
-		return &exitCodeError{code: 1, err: fmt.Errorf("watch failed: %w", err)}
-	}
-	defer client.Close()
-
 	var startFilter *string
 	if trimmed := strings.TrimSpace(start); trimmed != "" {
 		startFilter = &trimmed
@@ -112,7 +108,12 @@ func runWatch(
 		IncludeReactions:     includeReactions,
 	}
 
-	err = client.Watch(ctx, params, func(event protocol.WatchEvent) error {
+	backend, err := resolveBackendOptions(dbPath, replicaPath)
+	if err != nil {
+		return &exitCodeError{code: 1, err: err}
+	}
+
+	handleEvent := func(event protocol.WatchEvent) error {
 		if jsonOutput {
 			return output.WriteJSONLine(cmd.OutOrStdout(), event)
 		}
@@ -133,7 +134,22 @@ func runWatch(
 		default:
 			return fmt.Errorf("unknown watch event: %s", event.Event)
 		}
-	})
+	}
+
+	switch backend.kind {
+	case backendReplica:
+		err = replica.Watch(ctx, backend.path, params, handleEvent)
+	default:
+		client, startErr := localtransport.Start(ctx, localtransport.Options{
+			DBPath: backend.path,
+		})
+		if startErr != nil {
+			return &exitCodeError{code: 1, err: fmt.Errorf("watch failed: %w", startErr)}
+		}
+		defer client.Close()
+
+		err = client.Watch(ctx, params, handleEvent)
+	}
 	if err != nil && ctx.Err() != nil {
 		return nil
 	}

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+
+- `imsgd replicate` to build a portable, contact-enriched `replica.db` from a source Messages database.
+- `imsgctl --replica` support for `health`, `chats`, `history`, and `watch`.
+
 ## [0.1.0]
 
 ### Added

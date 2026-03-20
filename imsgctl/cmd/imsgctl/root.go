@@ -23,6 +23,7 @@ func (e *exitCodeError) Error() string {
 
 func execute() int {
 	rootCmd := newRootCommand()
+	rootCmd.SetArgs(normalizeReplicaFlagArgs(os.Args[1:]))
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *exitCodeError
@@ -40,6 +41,24 @@ func execute() int {
 	}
 
 	return 0
+}
+
+func normalizeReplicaFlagArgs(args []string) []string {
+	normalized := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--replica" && index+1 < len(args) {
+			nextArgument := args[index+1]
+			if nextArgument != "" && nextArgument[0] != '-' {
+				normalized = append(normalized, "--replica="+nextArgument)
+				index++
+				continue
+			}
+		}
+		normalized = append(normalized, argument)
+	}
+
+	return normalized
 }
 
 func newRootCommand() *cobra.Command {

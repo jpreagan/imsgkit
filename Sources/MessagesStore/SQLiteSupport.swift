@@ -21,6 +21,27 @@ func withReadOnlyDatabase<T>(
   return try body(database!)
 }
 
+func withReadWriteDatabase<T>(
+  at path: String,
+  create: Bool = true,
+  body: (OpaquePointer) throws -> T
+) throws -> T {
+  var flags = SQLITE_OPEN_READWRITE
+  if create {
+    flags |= SQLITE_OPEN_CREATE
+  }
+
+  var database: OpaquePointer?
+  guard sqlite3_open_v2(path, &database, flags, nil) == SQLITE_OK else {
+    throw MessagesStoreError.openDatabase(lastSQLiteError(from: database))
+  }
+  defer {
+    sqlite3_close(database)
+  }
+
+  return try body(database!)
+}
+
 func sqliteText(_ statement: OpaquePointer?, column: Int32) -> String {
   guard let pointer = sqlite3_column_text(statement, column) else {
     return ""
@@ -97,6 +118,25 @@ func databaseTables(database: OpaquePointer) throws -> Set<String> {
 
 func sqliteBindText(_ statement: OpaquePointer?, index: Int32, value: String) {
   sqlite3_bind_text(statement, index, value, -1, sqliteTransientDestructor)
+}
+
+func sqliteBindOptionalText(_ statement: OpaquePointer?, index: Int32, value: String?) {
+  guard let value else {
+    sqlite3_bind_null(statement, index)
+    return
+  }
+
+  sqliteBindText(statement, index: index, value: value)
+}
+
+func sqliteBindBool(_ statement: OpaquePointer?, index: Int32, value: Bool) {
+  sqlite3_bind_int64(statement, index, value ? 1 : 0)
+}
+
+func executeStatements(database: OpaquePointer, sql: String) throws {
+  guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+    throw MessagesStoreError.executeStatement(lastSQLiteError(from: database))
+  }
 }
 
 func formatMessagesTimestamp(_ timestamp: Int64?) -> String? {

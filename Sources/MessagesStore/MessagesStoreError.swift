@@ -4,6 +4,7 @@ enum MessagesStoreError: Error, CustomStringConvertible {
   case unsupportedSchema(String)
   case openDatabase(String)
   case prepareStatement(String)
+  case executeStatement(String)
   case stepStatement(String)
 
   var description: String {
@@ -16,6 +17,7 @@ enum MessagesStoreError: Error, CustomStringConvertible {
       return message
     case .openDatabase(let message),
       .prepareStatement(let message),
+      .executeStatement(let message),
       .stepStatement(let message):
       return message
     }

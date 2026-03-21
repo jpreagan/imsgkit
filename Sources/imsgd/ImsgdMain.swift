@@ -17,8 +17,15 @@ enum ImsgdError: Error, CustomStringConvertible {
   }
 }
 
+enum Command {
+  case serve
+  case replicate
+}
+
 struct Options {
+  let command: Command
   let dbPath: String
+  let replicaPath: String
   let showVersion: Bool
 }
 
@@ -29,6 +36,8 @@ struct ImsgdMain {
       let options = try parseOptions(arguments: Array(CommandLine.arguments.dropFirst()))
       if options.showVersion {
         FileHandle.standardOutput.write(Data("\(BuildInfo.version)\n".utf8))
+      } else if options.command == .replicate {
+        try replicate(sourceDBPath: options.dbPath, replicaDBPath: options.replicaPath)
       } else {
         try serve(dbPath: options.dbPath)
       }
@@ -41,8 +50,15 @@ struct ImsgdMain {
 
 private func parseOptions(arguments: [String]) throws -> Options {
   var dbPath = MessagesHealthProbe.defaultChatDBPath
+  var replicaPath = ReplicaStore.defaultReplicaDBPath
   var showVersion = false
+  var command: Command = .serve
   var index = 0
+
+  if let firstArgument = arguments.first, firstArgument == "replicate" {
+    command = .replicate
+    index = 1
+  }
 
   while index < arguments.count {
     let argument = arguments[index]
@@ -56,11 +72,18 @@ private func parseOptions(arguments: [String]) throws -> Options {
       }
       dbPath = arguments[index + 1]
       index += 2
+    case "--output":
+      guard index + 1 < arguments.count else {
+        throw ImsgdError.invalidArguments("missing value for --output")
+      }
+      replicaPath = arguments[index + 1]
+      index += 2
     case "--help", "-h":
       throw ImsgdError.invalidArguments(
         """
         usage:
           imsgd [--db PATH]
+          imsgd replicate [--db PATH] [--output PATH]
           imsgd version
         """)
     default:
@@ -68,7 +91,37 @@ private func parseOptions(arguments: [String]) throws -> Options {
     }
   }
 
-  return Options(dbPath: dbPath, showVersion: showVersion)
+  return Options(
+    command: command,
+    dbPath: dbPath,
+    replicaPath: replicaPath,
+    showVersion: showVersion
+  )
+}
+
+private func replicate(sourceDBPath: String, replicaDBPath: String) throws {
+  let contactLookup = makeContactLookup()
+  let result = try ReplicaStore.build(
+    sourceDBPath: sourceDBPath,
+    replicaDBPath: replicaDBPath,
+    builderVersion: BuildInfo.version,
+    contactLookup: contactLookup
+  )
+  let payload: [String: Any] = [
+    "source_db_path": result.sourceDBPath,
+    "replica_db_path": result.replicaDBPath,
+    "chat_count": result.chatCount,
+    "message_count": result.messageCount,
+    "watch_event_count": result.watchEventCount,
+    "source_max_rowid": result.sourceMaxRowID,
+    "generated_at": result.generatedAt,
+  ]
+  let data = try JSONSerialization.data(
+    withJSONObject: payload,
+    options: [.prettyPrinted, .sortedKeys]
+  )
+  FileHandle.standardOutput.write(data)
+  FileHandle.standardOutput.write(Data("\n".utf8))
 }
 
 private func serve(dbPath: String) throws {

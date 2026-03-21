@@ -23,6 +23,7 @@ func (e *exitCodeError) Error() string {
 
 func execute() int {
 	rootCmd := newRootCommand()
+	rootCmd.SetArgs(os.Args[1:])
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *exitCodeError

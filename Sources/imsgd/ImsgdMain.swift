@@ -19,7 +19,7 @@ enum ImsgdError: Error, CustomStringConvertible {
 
 enum Command {
   case serve
-  case replicate
+  case sync
 }
 
 struct Options {
@@ -36,8 +36,8 @@ struct ImsgdMain {
       let options = try parseOptions(arguments: Array(CommandLine.arguments.dropFirst()))
       if options.showVersion {
         FileHandle.standardOutput.write(Data("\(BuildInfo.version)\n".utf8))
-      } else if options.command == .replicate {
-        try replicate(sourceDBPath: options.dbPath, replicaDBPath: options.replicaPath)
+      } else if options.command == .sync {
+        try sync(sourceDBPath: options.dbPath, replicaDBPath: options.replicaPath)
       } else {
         try serve(dbPath: options.dbPath)
       }
@@ -55,8 +55,8 @@ private func parseOptions(arguments: [String]) throws -> Options {
   var command: Command = .serve
   var index = 0
 
-  if let firstArgument = arguments.first, firstArgument == "replicate" {
-    command = .replicate
+  if let firstArgument = arguments.first, firstArgument == "sync" {
+    command = .sync
     index = 1
   }
 
@@ -83,7 +83,7 @@ private func parseOptions(arguments: [String]) throws -> Options {
         """
         usage:
           imsgd [--db PATH]
-          imsgd replicate [--db PATH] [--output PATH]
+          imsgd sync [--db PATH] [--output PATH]
           imsgd version
         """)
     default:
@@ -99,26 +99,44 @@ private func parseOptions(arguments: [String]) throws -> Options {
   )
 }
 
-private func replicate(sourceDBPath: String, replicaDBPath: String) throws {
+private let replicaSyncPollInterval: TimeInterval = 1.0
+
+private func sync(sourceDBPath: String, replicaDBPath: String) throws {
   let contactLookup = makeContactLookup()
-  let result = try ReplicaStore.build(
-    sourceDBPath: sourceDBPath,
-    replicaDBPath: replicaDBPath,
-    builderVersion: BuildInfo.version,
-    contactLookup: contactLookup
-  )
+  var isFirstPass = true
+
+  while true {
+    let result = try ReplicaStore.syncOnce(
+      sourceDBPath: sourceDBPath,
+      replicaDBPath: replicaDBPath,
+      builderVersion: BuildInfo.version,
+      contactLookup: contactLookup
+    )
+    if isFirstPass || result.rebuilt || result.appliedWatchEventCount > 0 {
+      try writeSyncResult(result)
+    }
+
+    isFirstPass = false
+    Thread.sleep(forTimeInterval: replicaSyncPollInterval)
+  }
+}
+
+private func writeSyncResult(_ result: ReplicaSyncResult) throws {
   let payload: [String: Any] = [
     "source_db_path": result.sourceDBPath,
     "replica_db_path": result.replicaDBPath,
     "chat_count": result.chatCount,
     "message_count": result.messageCount,
     "watch_event_count": result.watchEventCount,
+    "applied_message_count": result.appliedMessageCount,
+    "applied_watch_event_count": result.appliedWatchEventCount,
     "source_max_rowid": result.sourceMaxRowID,
-    "generated_at": result.generatedAt,
+    "synced_at": result.syncedAt,
+    "rebuilt": result.rebuilt,
   ]
   let data = try JSONSerialization.data(
     withJSONObject: payload,
-    options: [.prettyPrinted, .sortedKeys]
+    options: [.sortedKeys]
   )
   FileHandle.standardOutput.write(data)
   FileHandle.standardOutput.write(Data("\n".utf8))

@@ -8,7 +8,7 @@ The format is based on Keep a Changelog.
 
 ### Added
 
-- `imsgd replicate` to build a portable, contact-enriched `replica.db` from a source Messages database.
+- `imsgd sync` to create and maintain a portable, contact-enriched `replica.db` from a source Messages database.
 - `imsgctl --db` support for reading either a live Messages `chat.db` or a `replica.db`.
 
 ## [0.1.0]

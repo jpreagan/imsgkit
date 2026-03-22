@@ -145,6 +145,7 @@ public enum ChatWatchQuery {
     startDate: Date? = nil,
     endDate: Date? = nil,
     includeReactions: Bool = false,
+    includeMessageReactions: Bool = true,
     contactLookup: ContactLookup = { _ in nil }
   ) throws -> WatchBatch {
     if afterRowID < 0 {
@@ -170,14 +171,21 @@ public enum ChatWatchQuery {
       )
 
       var events: [WatchEvent] = []
+      var reactionTargetCache: [String: ReactionTargetContext?] = [:]
       for row in rows {
-        if let event = makeEvent(
+        let resolvedRow = try resolveReactionContext(
           database: database,
           row: row,
+          cache: &reactionTargetCache
+        )
+        if let event = makeEvent(
+          database: database,
+          row: resolvedRow,
           chatID: chatID,
           startDate: startDate,
           endDate: endDate,
           includeReactions: includeReactions,
+          includeMessageReactions: includeMessageReactions,
           contactLookup: contactLookup
         ) {
           events.append(event)
@@ -213,6 +221,12 @@ public enum ChatWatchQuery {
     let label: String?
   }
 
+  private struct ReactionTargetContext {
+    let chatID: Int64
+    let destinationCallerID: String
+    let messageDate: Int64?
+  }
+
   private static func loadEventRows(
     database: OpaquePointer,
     afterRowID: Int64,
@@ -227,14 +241,14 @@ public enum ChatWatchQuery {
       SELECT
         m.ROWID,
         COALESCE(m.guid, ''),
-        COALESCE(cmj.chat_id, target_cmj.chat_id, 0),
+        COALESCE(cmj.chat_id, 0),
         COALESCE(m.service, ''),
         COALESCE(h.id, ''),
-        COALESCE(m.destination_caller_id, target.destination_caller_id, ''),
+        COALESCE(m.destination_caller_id, ''),
         COALESCE(m.is_from_me, 0),
         COALESCE(m.text, ''),
         m.attributedBody,
-        COALESCE(cmj.message_date, target_cmj.message_date, m.date),
+        COALESCE(cmj.message_date, m.date),
         COALESCE(m.is_system_message, 0),
         COALESCE(m.item_type, 0),
         COALESCE(m.associated_message_guid, ''),
@@ -243,16 +257,10 @@ public enum ChatWatchQuery {
       FROM message m
       LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
       LEFT JOIN handle h ON h.ROWID = m.handle_id
-      LEFT JOIN message target
-        ON (
-          m.associated_message_guid = target.guid
-          OR m.associated_message_guid LIKE '%/' || target.guid
-        )
-      LEFT JOIN chat_message_join target_cmj ON target_cmj.message_id = target.ROWID
       WHERE m.ROWID > ?
         AND (? IS NULL OR m.ROWID <= ?)
-        AND (? IS NULL OR COALESCE(cmj.message_date, target_cmj.message_date, m.date) >= ?)
-        AND (? IS NULL OR COALESCE(cmj.message_date, target_cmj.message_date, m.date) < ?)
+        AND (? IS NULL OR COALESCE(cmj.message_date, m.date) >= ?)
+        AND (? IS NULL OR COALESCE(cmj.message_date, m.date) < ?)
       ORDER BY m.ROWID ASC
       LIMIT ?
       """
@@ -306,6 +314,95 @@ public enum ChatWatchQuery {
     }
   }
 
+  private static func resolveReactionContext(
+    database: OpaquePointer,
+    row: EventRow,
+    cache: inout [String: ReactionTargetContext?]
+  ) throws -> EventRow {
+    guard
+      let associatedType = row.associatedMessageType,
+      ChatReactionType.isReaction(associatedType)
+    else {
+      return row
+    }
+
+    let targetGUID = normalizedAssociatedGUID(row.associatedMessageGUID)
+    guard !targetGUID.isEmpty else {
+      return row
+    }
+
+    let target: ReactionTargetContext?
+    if let cachedTarget = cache[targetGUID] {
+      target = cachedTarget
+    } else {
+      let loadedTarget = try loadReactionTargetContext(database: database, targetGUID: targetGUID)
+      cache[targetGUID] = loadedTarget
+      target = loadedTarget
+    }
+
+    guard let target else {
+      return row
+    }
+
+    return EventRow(
+      messageID: row.messageID,
+      messageGUID: row.messageGUID,
+      chatID: target.chatID,
+      service: row.service,
+      handleIdentifier: row.handleIdentifier,
+      destinationCallerID: target.destinationCallerID,
+      fromMe: row.fromMe,
+      text: row.text,
+      attributedBody: row.attributedBody,
+      messageDate: target.messageDate,
+      isSystemMessage: row.isSystemMessage,
+      itemType: row.itemType,
+      associatedMessageGUID: row.associatedMessageGUID,
+      associatedMessageType: row.associatedMessageType,
+      threadOriginatorGUID: row.threadOriginatorGUID
+    )
+  }
+
+  private static func loadReactionTargetContext(
+    database: OpaquePointer,
+    targetGUID: String
+  ) throws -> ReactionTargetContext? {
+    let sql = """
+      SELECT
+        COALESCE(cmj.chat_id, 0),
+        COALESCE(m.destination_caller_id, ''),
+        COALESCE(cmj.message_date, m.date)
+      FROM message m
+      LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+      WHERE m.guid = ?
+      LIMIT 1
+      """
+
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    sqliteBindText(statement, index: 1, value: targetGUID)
+
+    let stepResult = sqlite3_step(statement)
+    switch stepResult {
+    case SQLITE_ROW:
+      return ReactionTargetContext(
+        chatID: sqlite3_column_int64(statement, 0),
+        destinationCallerID: sqliteText(statement, column: 1),
+        messageDate: sqliteValue(statement, column: 2)
+      )
+    case SQLITE_DONE:
+      return nil
+    default:
+      throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+    }
+  }
+
   private static func makeEvent(
     database: OpaquePointer,
     row: EventRow,
@@ -313,6 +410,7 @@ public enum ChatWatchQuery {
     startDate: Date?,
     endDate: Date?,
     includeReactions: Bool,
+    includeMessageReactions: Bool,
     contactLookup: ContactLookup
   ) -> WatchEvent? {
     guard row.itemType == 0, row.isSystemMessage == false else {
@@ -341,13 +439,19 @@ public enum ChatWatchQuery {
 
     return WatchEvent(
       event: "message",
-      message: makeMessage(database: database, row: row, contactLookup: contactLookup)
+      message: makeMessage(
+        database: database,
+        row: row,
+        includeReactions: includeMessageReactions,
+        contactLookup: contactLookup
+      )
     )
   }
 
   private static func makeMessage(
     database: OpaquePointer,
     row: EventRow,
+    includeReactions: Bool,
     contactLookup: ContactLookup
   ) -> ChatMessage {
     let sender = resolveSender(row: row, contactLookup: contactLookup)
@@ -371,7 +475,10 @@ public enum ChatWatchQuery {
       service: row.service,
       destinationCallerID: row.destinationCallerID.isEmpty ? nil : row.destinationCallerID,
       attachments: loadChatAttachments(database: database, messageID: row.messageID),
-      reactions: loadChatReactions(database: database, messageGUID: row.messageGUID)
+      reactions:
+        includeReactions
+        ? loadChatReactions(database: database, messageGUID: row.messageGUID)
+        : []
     )
   }
 

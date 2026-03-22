@@ -177,8 +177,8 @@ func GetHistory(
 			reactions_json
 		FROM messages
 		WHERE chat_id = ?
-		  AND (? = '' OR (created_at IS NOT NULL AND created_at >= ?))
-		  AND (? = '' OR (created_at IS NOT NULL AND created_at < ?))
+		  AND (? = '' OR (created_at IS NOT NULL AND julianday(created_at) >= julianday(?)))
+		  AND (? = '' OR (created_at IS NOT NULL AND julianday(created_at) < julianday(?)))
 		ORDER BY created_at DESC, message_id DESC
 		LIMIT ?
 		`,
@@ -276,8 +276,8 @@ func replayWatchBatch(
 		  AND source_rowid <= ?
 		  AND (? IS NULL OR chat_id = ?)
 		  AND (? = 1 OR event_type <> 'reaction')
-		  AND (? = '' OR (created_at IS NOT NULL AND created_at >= ?))
-		  AND (? = '' OR (created_at IS NOT NULL AND created_at < ?))
+		  AND (? = '' OR (created_at IS NOT NULL AND julianday(created_at) >= julianday(?)))
+		  AND (? = '' OR (created_at IS NOT NULL AND julianday(created_at) < julianday(?)))
 		ORDER BY source_rowid ASC
 		`,
 		afterRowID,

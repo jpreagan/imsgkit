@@ -139,6 +139,22 @@ func executeStatements(database: OpaquePointer, sql: String) throws {
   }
 }
 
+func withTransaction<T>(
+  database: OpaquePointer,
+  body: () throws -> T
+) throws -> T {
+  try executeStatements(database: database, sql: "BEGIN IMMEDIATE;")
+
+  do {
+    let result = try body()
+    try executeStatements(database: database, sql: "COMMIT;")
+    return result
+  } catch {
+    _ = sqlite3_exec(database, "ROLLBACK;", nil, nil, nil)
+    throw error
+  }
+}
+
 func formatMessagesTimestamp(_ timestamp: Int64?) -> String? {
   guard let timestamp else {
     return nil

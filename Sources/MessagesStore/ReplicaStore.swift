@@ -29,9 +29,52 @@ public struct ReplicaBuildResult: Sendable, Equatable {
   }
 }
 
+public struct ReplicaSyncResult: Sendable, Equatable {
+  public let sourceDBPath: String
+  public let replicaDBPath: String
+  public let chatCount: Int
+  public let messageCount: Int
+  public let watchEventCount: Int
+  public let appliedMessageCount: Int
+  public let appliedWatchEventCount: Int
+  public let sourceMaxRowID: Int64
+  public let syncedAt: String
+  public let rebuilt: Bool
+
+  public init(
+    sourceDBPath: String,
+    replicaDBPath: String,
+    chatCount: Int,
+    messageCount: Int,
+    watchEventCount: Int,
+    appliedMessageCount: Int,
+    appliedWatchEventCount: Int,
+    sourceMaxRowID: Int64,
+    syncedAt: String,
+    rebuilt: Bool
+  ) {
+    self.sourceDBPath = sourceDBPath
+    self.replicaDBPath = replicaDBPath
+    self.chatCount = chatCount
+    self.messageCount = messageCount
+    self.watchEventCount = watchEventCount
+    self.appliedMessageCount = appliedMessageCount
+    self.appliedWatchEventCount = appliedWatchEventCount
+    self.sourceMaxRowID = sourceMaxRowID
+    self.syncedAt = syncedAt
+    self.rebuilt = rebuilt
+  }
+}
+
 public enum ReplicaStore {
   public static let schemaVersion = "1"
   private static let batchLimit = 500
+  private static let requiredTables: Set<String> = [
+    "metadata",
+    "chats",
+    "messages",
+    "watch_events",
+  ]
 
   public static var defaultReplicaDBPath: String {
     let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
@@ -50,6 +93,189 @@ public enum ReplicaStore {
   ) throws -> ReplicaBuildResult {
     let sourcePath = (sourceDBPath as NSString).expandingTildeInPath
     let outputPath = (replicaDBPath as NSString).expandingTildeInPath
+    return try buildReplica(
+      sourcePath: sourcePath,
+      outputPath: outputPath,
+      builderVersion: builderVersion,
+      contactLookup: contactLookup
+    )
+  }
+
+  public static func syncOnce(
+    sourceDBPath: String = MessagesHealthProbe.defaultChatDBPath,
+    replicaDBPath: String = defaultReplicaDBPath,
+    builderVersion: String = "dev",
+    contactLookup: ContactLookup = { _ in nil }
+  ) throws -> ReplicaSyncResult {
+    let sourcePath = (sourceDBPath as NSString).expandingTildeInPath
+    let outputPath = (replicaDBPath as NSString).expandingTildeInPath
+
+    guard
+      let state = try loadReplicaState(
+        replicaDBPath: outputPath,
+        sourceDBPath: sourcePath
+      )
+    else {
+      let buildResult = try buildReplica(
+        sourcePath: sourcePath,
+        outputPath: outputPath,
+        builderVersion: builderVersion,
+        contactLookup: contactLookup
+      )
+      return ReplicaSyncResult(
+        sourceDBPath: buildResult.sourceDBPath,
+        replicaDBPath: buildResult.replicaDBPath,
+        chatCount: buildResult.chatCount,
+        messageCount: buildResult.messageCount,
+        watchEventCount: buildResult.watchEventCount,
+        appliedMessageCount: buildResult.messageCount,
+        appliedWatchEventCount: buildResult.watchEventCount,
+        sourceMaxRowID: buildResult.sourceMaxRowID,
+        syncedAt: buildResult.generatedAt,
+        rebuilt: true
+      )
+    }
+
+    let sourceMaxRowID = try ChatWatchQuery.maxRowID(dbPath: sourcePath)
+    if sourceMaxRowID < state.sourceMaxRowID {
+      let buildResult = try buildReplica(
+        sourcePath: sourcePath,
+        outputPath: outputPath,
+        builderVersion: builderVersion,
+        contactLookup: contactLookup
+      )
+      return ReplicaSyncResult(
+        sourceDBPath: buildResult.sourceDBPath,
+        replicaDBPath: buildResult.replicaDBPath,
+        chatCount: buildResult.chatCount,
+        messageCount: buildResult.messageCount,
+        watchEventCount: buildResult.watchEventCount,
+        appliedMessageCount: buildResult.messageCount,
+        appliedWatchEventCount: buildResult.watchEventCount,
+        sourceMaxRowID: buildResult.sourceMaxRowID,
+        syncedAt: buildResult.generatedAt,
+        rebuilt: true
+      )
+    }
+
+    let syncedAt = iso8601Timestamp(from: Date())
+    var appliedMessageCount = 0
+    var appliedWatchEventCount = 0
+    var updatedChatIDs = Set<Int64>()
+    var refreshedMessageGUIDs = Set<String>()
+
+    try withReadWriteDatabase(at: outputPath, create: false) { replicaDatabase in
+      try withTransaction(database: replicaDatabase) {
+        var cursor = state.sourceMaxRowID
+        while cursor < sourceMaxRowID {
+          let batch = try ChatWatchQuery.loadBatch(
+            dbPath: sourcePath,
+            afterRowID: cursor,
+            throughRowID: sourceMaxRowID,
+            limit: batchLimit,
+            includeReactions: true,
+            includeMessageReactions: false,
+            contactLookup: contactLookup
+          )
+          guard batch.lastSeenRowID > cursor else {
+            break
+          }
+
+          cursor = batch.lastSeenRowID
+          for event in batch.events {
+            appliedWatchEventCount += 1
+            try insertWatchEvent(event, into: replicaDatabase)
+
+            if let message = event.message {
+              appliedMessageCount += 1
+              updatedChatIDs.insert(message.chatID)
+              try upsertMessage(message, into: replicaDatabase)
+              try updateMessageWatchEvent(message, in: replicaDatabase)
+            }
+
+            if let reaction = event.reaction {
+              updatedChatIDs.insert(reaction.chatID)
+              if !reaction.targetGUID.isEmpty {
+                refreshedMessageGUIDs.insert(reaction.targetGUID)
+              }
+            }
+          }
+        }
+
+        for messageGUID in refreshedMessageGUIDs.sorted() {
+          guard
+            let message = try ChatHistoryQuery.message(
+              dbPath: sourcePath,
+              guid: messageGUID,
+              contactLookup: contactLookup
+            )
+          else {
+            continue
+          }
+
+          updatedChatIDs.insert(message.chatID)
+          try upsertMessage(message, into: replicaDatabase)
+          try updateMessageWatchEvent(message, in: replicaDatabase)
+        }
+
+        for chatID in updatedChatIDs.sorted() {
+          guard
+            let chat = try ChatListQuery.get(
+              dbPath: sourcePath,
+              chatID: chatID,
+              contactLookup: contactLookup
+            )
+          else {
+            continue
+          }
+
+          try upsertChat(chat, into: replicaDatabase)
+        }
+
+        try upsertMetadata(
+          database: replicaDatabase,
+          values: [
+            "schema_version": schemaVersion,
+            "builder_version": builderVersion,
+            "generated_at": syncedAt,
+            "source_db_path": sourcePath,
+            "source_max_rowid": String(sourceMaxRowID),
+          ]
+        )
+      }
+    }
+
+    let counts = try loadReplicaCounts(replicaDBPath: outputPath)
+    return ReplicaSyncResult(
+      sourceDBPath: sourcePath,
+      replicaDBPath: outputPath,
+      chatCount: counts.chatCount,
+      messageCount: counts.messageCount,
+      watchEventCount: counts.watchEventCount,
+      appliedMessageCount: appliedMessageCount,
+      appliedWatchEventCount: appliedWatchEventCount,
+      sourceMaxRowID: sourceMaxRowID,
+      syncedAt: syncedAt,
+      rebuilt: false
+    )
+  }
+
+  private struct ReplicaState {
+    let sourceMaxRowID: Int64
+  }
+
+  private struct ReplicaCounts {
+    let chatCount: Int
+    let messageCount: Int
+    let watchEventCount: Int
+  }
+
+  private static func buildReplica(
+    sourcePath: String,
+    outputPath: String,
+    builderVersion: String,
+    contactLookup: ContactLookup
+  ) throws -> ReplicaBuildResult {
     let outputURL = URL(fileURLWithPath: outputPath)
     let outputDirectory = outputURL.deletingLastPathComponent()
     let fileManager = FileManager.default
@@ -75,94 +301,73 @@ public enum ReplicaStore {
 
     var messageCount = 0
     var watchEventCount = 0
+    var refreshedMessageGUIDs = Set<String>()
     try withReadWriteDatabase(at: temporaryURL.path) { replicaDatabase in
       try executeStatements(
         database: replicaDatabase,
         sql: """
           PRAGMA journal_mode=DELETE;
           PRAGMA synchronous=NORMAL;
-          CREATE TABLE metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-          );
-          CREATE TABLE chats (
-            chat_id INTEGER PRIMARY KEY,
-            service TEXT NOT NULL,
-            identifier TEXT NOT NULL,
-            label TEXT NOT NULL,
-            contact_name TEXT,
-            participant_count INTEGER NOT NULL,
-            participants_json TEXT NOT NULL,
-            last_message_at TEXT,
-            message_count INTEGER NOT NULL
-          );
-          CREATE TABLE messages (
-            message_id INTEGER PRIMARY KEY,
-            chat_id INTEGER NOT NULL,
-            guid TEXT NOT NULL,
-            reply_to_guid TEXT,
-            thread_originator_guid TEXT,
-            sender TEXT NOT NULL,
-            sender_name TEXT,
-            sender_label TEXT,
-            from_me INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            created_at TEXT,
-            service TEXT NOT NULL,
-            destination_caller_id TEXT,
-            attachments_json TEXT NOT NULL,
-            reactions_json TEXT NOT NULL
-          );
-          CREATE TABLE watch_events (
-            source_rowid INTEGER PRIMARY KEY,
-            event_type TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            chat_id INTEGER NOT NULL,
-            created_at TEXT
-          );
-          CREATE INDEX idx_chats_last_message ON chats(last_message_at DESC, chat_id DESC);
-          CREATE INDEX idx_messages_chat_order ON messages(chat_id, created_at DESC, message_id DESC);
-          CREATE INDEX idx_watch_events_chat_rowid ON watch_events(chat_id, source_rowid);
           """
       )
-
-      try writeMetadata(
-        database: replicaDatabase,
-        values: [
-          "schema_version": schemaVersion,
-          "builder_version": builderVersion,
-          "generated_at": generatedAt,
-          "source_db_path": sourcePath,
-          "source_max_rowid": String(sourceMaxRowID),
-        ]
-      )
-
-      for chat in chats {
-        try insertChat(chat, into: replicaDatabase)
-      }
-
-      var cursor: Int64 = 0
-      while cursor < sourceMaxRowID {
-        let batch = try ChatWatchQuery.loadBatch(
-          dbPath: sourcePath,
-          afterRowID: cursor,
-          throughRowID: sourceMaxRowID,
-          limit: batchLimit,
-          includeReactions: true,
-          contactLookup: contactLookup
+      try withTransaction(database: replicaDatabase) {
+        try createSchema(database: replicaDatabase)
+        try upsertMetadata(
+          database: replicaDatabase,
+          values: [
+            "schema_version": schemaVersion,
+            "builder_version": builderVersion,
+            "generated_at": generatedAt,
+            "source_db_path": sourcePath,
+            "source_max_rowid": String(sourceMaxRowID),
+          ]
         )
-        guard batch.lastSeenRowID > cursor else {
-          break
+
+        for chat in chats {
+          try upsertChat(chat, into: replicaDatabase)
         }
 
-        cursor = batch.lastSeenRowID
-        for event in batch.events {
-          watchEventCount += 1
-          try insertWatchEvent(event, into: replicaDatabase)
-          if let message = event.message {
-            messageCount += 1
-            try insertMessage(message, into: replicaDatabase)
+        var cursor: Int64 = 0
+        while cursor < sourceMaxRowID {
+          let batch = try ChatWatchQuery.loadBatch(
+            dbPath: sourcePath,
+            afterRowID: cursor,
+            throughRowID: sourceMaxRowID,
+            limit: batchLimit,
+            includeReactions: true,
+            includeMessageReactions: false,
+            contactLookup: contactLookup
+          )
+          guard batch.lastSeenRowID > cursor else {
+            break
           }
+
+          cursor = batch.lastSeenRowID
+          for event in batch.events {
+            watchEventCount += 1
+            try insertWatchEvent(event, into: replicaDatabase)
+            if let message = event.message {
+              messageCount += 1
+              try upsertMessage(message, into: replicaDatabase)
+            } else if let reaction = event.reaction, !reaction.targetGUID.isEmpty {
+              refreshedMessageGUIDs.insert(reaction.targetGUID)
+            }
+          }
+        }
+
+        for messageGUID in refreshedMessageGUIDs.sorted() {
+          guard
+            let message = try ChatHistoryQuery.message(
+              dbPath: sourcePath,
+              guid: messageGUID,
+              contactLookup: contactLookup
+            )
+          else {
+            continue
+          }
+
+          try upsertMessage(message, into: replicaDatabase)
+          try updateMessageWatchEvent(message, in: replicaDatabase)
         }
       }
     }
@@ -186,11 +391,144 @@ public enum ReplicaStore {
     )
   }
 
-  private static func writeMetadata(
+  private static func loadReplicaState(
+    replicaDBPath: String,
+    sourceDBPath: String
+  ) throws -> ReplicaState? {
+    guard FileManager.default.fileExists(atPath: replicaDBPath) else {
+      return nil
+    }
+
+    return try? withReadOnlyDatabase(at: replicaDBPath) { database in
+      let tables = try databaseTables(database: database)
+      guard requiredTables.isSubset(of: tables) else {
+        throw MessagesStoreError.unsupportedSchema("replica database schema mismatch")
+      }
+
+      let metadata = try loadMetadata(database: database)
+      guard metadata["schema_version"] == schemaVersion else {
+        throw MessagesStoreError.unsupportedSchema("replica schema version mismatch")
+      }
+      guard metadata["source_db_path"] == sourceDBPath else {
+        throw MessagesStoreError.unsupportedSchema("replica source path mismatch")
+      }
+      guard
+        let sourceMaxRowIDValue = metadata["source_max_rowid"],
+        let sourceMaxRowID = Int64(sourceMaxRowIDValue)
+      else {
+        throw MessagesStoreError.unsupportedSchema("replica source watermark missing")
+      }
+
+      return ReplicaState(sourceMaxRowID: sourceMaxRowID)
+    }
+  }
+
+  private static func loadReplicaCounts(replicaDBPath: String) throws -> ReplicaCounts {
+    try withReadOnlyDatabase(at: replicaDBPath) { database in
+      ReplicaCounts(
+        chatCount: try countRows(database: database, table: "chats"),
+        messageCount: try countRows(database: database, table: "messages"),
+        watchEventCount: try countRows(database: database, table: "watch_events")
+      )
+    }
+  }
+
+  private static func createSchema(database: OpaquePointer) throws {
+    try executeStatements(
+      database: database,
+      sql: """
+        CREATE TABLE metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        CREATE TABLE chats (
+          chat_id INTEGER PRIMARY KEY,
+          service TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          label TEXT NOT NULL,
+          contact_name TEXT,
+          participant_count INTEGER NOT NULL,
+          participants_json TEXT NOT NULL,
+          last_message_at TEXT,
+          message_count INTEGER NOT NULL
+        );
+        CREATE TABLE messages (
+          message_id INTEGER PRIMARY KEY,
+          chat_id INTEGER NOT NULL,
+          guid TEXT NOT NULL,
+          reply_to_guid TEXT,
+          thread_originator_guid TEXT,
+          sender TEXT NOT NULL,
+          sender_name TEXT,
+          sender_label TEXT,
+          from_me INTEGER NOT NULL,
+          text TEXT NOT NULL,
+          created_at TEXT,
+          service TEXT NOT NULL,
+          destination_caller_id TEXT,
+          attachments_json TEXT NOT NULL,
+          reactions_json TEXT NOT NULL
+        );
+        CREATE TABLE watch_events (
+          source_rowid INTEGER PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          chat_id INTEGER NOT NULL,
+          created_at TEXT
+        );
+        CREATE INDEX idx_chats_last_message ON chats(last_message_at DESC, chat_id DESC);
+        CREATE INDEX idx_messages_chat_order ON messages(chat_id, created_at DESC, message_id DESC);
+        CREATE INDEX idx_watch_events_chat_rowid ON watch_events(chat_id, source_rowid);
+        """
+    )
+  }
+
+  private static func loadMetadata(database: OpaquePointer) throws -> [String: String] {
+    let sql = "SELECT key, value FROM metadata;"
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    var metadata: [String: String] = [:]
+    while true {
+      let stepResult = sqlite3_step(statement)
+      switch stepResult {
+      case SQLITE_ROW:
+        metadata[sqliteText(statement, column: 0)] = sqliteText(statement, column: 1)
+      case SQLITE_DONE:
+        return metadata
+      default:
+        throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+      }
+    }
+  }
+
+  private static func countRows(database: OpaquePointer, table: String) throws -> Int {
+    let sql = "SELECT COUNT(*) FROM \(table);"
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+      throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+    }
+
+    return Int(sqlite3_column_int64(statement, 0))
+  }
+
+  private static func upsertMetadata(
     database: OpaquePointer,
     values: [String: String]
   ) throws {
-    let sql = "INSERT INTO metadata (key, value) VALUES (?, ?);"
+    let sql = "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);"
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
       throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
@@ -210,9 +548,9 @@ public enum ReplicaStore {
     }
   }
 
-  private static func insertChat(_ chat: ChatSummary, into database: OpaquePointer) throws {
+  private static func upsertChat(_ chat: ChatSummary, into database: OpaquePointer) throws {
     let sql = """
-      INSERT INTO chats (
+      INSERT OR REPLACE INTO chats (
         chat_id,
         service,
         identifier,
@@ -248,9 +586,9 @@ public enum ReplicaStore {
     }
   }
 
-  private static func insertMessage(_ message: ChatMessage, into database: OpaquePointer) throws {
+  private static func upsertMessage(_ message: ChatMessage, into database: OpaquePointer) throws {
     let sql = """
-      INSERT INTO messages (
+      INSERT OR REPLACE INTO messages (
         message_id,
         chat_id,
         guid,
@@ -308,7 +646,7 @@ public enum ReplicaStore {
 
   private static func insertWatchEvent(_ event: WatchEvent, into database: OpaquePointer) throws {
     let sql = """
-      INSERT INTO watch_events (
+      INSERT OR IGNORE INTO watch_events (
         source_rowid,
         event_type,
         payload_json,
@@ -334,6 +672,38 @@ public enum ReplicaStore {
       index: 5,
       value: event.message?.createdAt ?? event.reaction?.createdAt
     )
+
+    guard sqlite3_step(statement) == SQLITE_DONE else {
+      throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+    }
+  }
+
+  private static func updateMessageWatchEvent(
+    _ message: ChatMessage,
+    in database: OpaquePointer
+  ) throws {
+    let sql = """
+      UPDATE watch_events
+      SET payload_json = ?, chat_id = ?, created_at = ?
+      WHERE source_rowid = ? AND event_type = 'message';
+      """
+
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    sqliteBindText(
+      statement,
+      index: 1,
+      value: jsonString(from: WatchEvent(event: "message", message: message).jsonObject)
+    )
+    sqlite3_bind_int64(statement, 2, message.chatID)
+    sqliteBindOptionalText(statement, index: 3, value: message.createdAt)
+    sqlite3_bind_int64(statement, 4, message.id)
 
     guard sqlite3_step(statement) == SQLITE_DONE else {
       throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))

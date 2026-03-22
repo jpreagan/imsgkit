@@ -52,6 +52,26 @@ public struct ChatSummary: Sendable, Equatable {
 public enum ChatListQuery {
   public static let defaultLimit = 20
 
+  public static func get(
+    dbPath: String = MessagesHealthProbe.defaultChatDBPath,
+    chatID: Int64,
+    contactLookup: ContactLookup = { _ in nil }
+  ) throws -> ChatSummary? {
+    if chatID <= 0 {
+      throw MessagesStoreError.invalidChatID(chatID)
+    }
+
+    let resolvedPath = (dbPath as NSString).expandingTildeInPath
+    return try withReadOnlyDatabase(at: resolvedPath) { database in
+      guard let row = try loadChatRow(database: database, chatID: chatID) else {
+        return nil
+      }
+
+      let participants = try loadParticipants(database: database, chatID: row.chatID)
+      return makeSummary(row: row, participants: participants, contactLookup: contactLookup)
+    }
+  }
+
   public static func list(
     dbPath: String = MessagesHealthProbe.defaultChatDBPath,
     limit: Int = defaultLimit,
@@ -139,6 +159,56 @@ public enum ChatListQuery {
       default:
         throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
       }
+    }
+  }
+
+  private static func loadChatRow(
+    database: OpaquePointer,
+    chatID: Int64
+  ) throws -> ChatRow? {
+    let sql = """
+      SELECT
+        c.ROWID,
+        c.guid,
+        COALESCE(c.chat_identifier, ''),
+        COALESCE(c.service_name, ''),
+        COALESCE(c.display_name, ''),
+        COALESCE(c.room_name, ''),
+        COUNT(cmj.message_id),
+        MAX(cmj.message_date)
+      FROM chat c
+      LEFT JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
+      WHERE c.ROWID = ?
+      GROUP BY c.ROWID, c.guid, c.chat_identifier, c.service_name, c.display_name, c.room_name
+      """
+
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    sqlite3_bind_int64(statement, 1, chatID)
+
+    let stepResult = sqlite3_step(statement)
+    switch stepResult {
+    case SQLITE_ROW:
+      return ChatRow(
+        chatID: sqlite3_column_int64(statement, 0),
+        chatGUID: sqliteText(statement, column: 1),
+        identifier: sqliteText(statement, column: 2),
+        service: sqliteText(statement, column: 3),
+        displayName: sqliteText(statement, column: 4),
+        roomName: sqliteText(statement, column: 5),
+        messageCount: Int(sqlite3_column_int64(statement, 6)),
+        lastMessageDate: sqliteValue(statement, column: 7)
+      )
+    case SQLITE_DONE:
+      return nil
+    default:
+      throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
     }
   }
 

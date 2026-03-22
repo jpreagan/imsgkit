@@ -156,6 +156,26 @@ public struct ChatMessage: Sendable, Equatable {
 public enum ChatHistoryQuery {
   public static let defaultLimit = 50
 
+  public static func message(
+    dbPath: String = MessagesHealthProbe.defaultChatDBPath,
+    guid: String,
+    contactLookup: ContactLookup = { _ in nil }
+  ) throws -> ChatMessage? {
+    let normalizedGUID = guid.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedGUID.isEmpty else {
+      return nil
+    }
+
+    let resolvedPath = (dbPath as NSString).expandingTildeInPath
+    return try withReadOnlyDatabase(at: resolvedPath) { database in
+      guard let row = try loadMessageRow(database: database, guid: normalizedGUID) else {
+        return nil
+      }
+
+      return makeMessage(database: database, row: row, contactLookup: contactLookup)
+    }
+  }
+
   public static func list(
     dbPath: String = MessagesHealthProbe.defaultChatDBPath,
     chatID: Int64,
@@ -292,6 +312,73 @@ public enum ChatHistoryQuery {
       default:
         throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
       }
+    }
+  }
+
+  private static func loadMessageRow(
+    database: OpaquePointer,
+    guid: String
+  ) throws -> MessageRow? {
+    try validateModernSchema(database: database)
+
+    let sql = """
+      SELECT
+        m.ROWID,
+        COALESCE(m.guid, ''),
+        cmj.chat_id,
+        COALESCE(m.service, ''),
+        COALESCE(h.id, ''),
+        COALESCE(m.destination_caller_id, ''),
+        COALESCE(m.is_from_me, 0),
+        COALESCE(m.text, ''),
+        m.attributedBody,
+        cmj.message_date,
+        COALESCE(m.associated_message_guid, ''),
+        m.associated_message_type,
+        COALESCE(m.thread_originator_guid, '')
+      FROM message m
+      INNER JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+      LEFT JOIN handle h ON h.ROWID = m.handle_id
+      WHERE m.guid = ?
+        AND COALESCE(m.item_type, 0) = 0
+        AND COALESCE(m.is_system_message, 0) = 0
+        AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)
+      ORDER BY cmj.message_date DESC, m.ROWID DESC
+      LIMIT 1
+      """
+
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(statement)
+    }
+
+    sqliteBindText(statement, index: 1, value: guid)
+
+    let stepResult = sqlite3_step(statement)
+    switch stepResult {
+    case SQLITE_ROW:
+      return MessageRow(
+        messageID: sqlite3_column_int64(statement, 0),
+        messageGUID: sqliteText(statement, column: 1),
+        chatID: sqlite3_column_int64(statement, 2),
+        service: sqliteText(statement, column: 3),
+        handleIdentifier: sqliteText(statement, column: 4),
+        destinationCallerID: sqliteText(statement, column: 5),
+        fromMe: sqlite3_column_int64(statement, 6) != 0,
+        text: sqliteText(statement, column: 7),
+        attributedBody: sqliteBlobData(statement, column: 8),
+        messageDate: sqliteValue(statement, column: 9),
+        associatedMessageGUID: sqliteText(statement, column: 10),
+        associatedMessageType: sqliteOptionalInt(statement, column: 11),
+        threadOriginatorGUID: sqliteText(statement, column: 12)
+      )
+    case SQLITE_DONE:
+      return nil
+    default:
+      throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
     }
   }
 

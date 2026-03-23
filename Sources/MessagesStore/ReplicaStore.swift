@@ -76,13 +76,28 @@ public enum ReplicaStore {
     "watch_events",
   ]
 
-  public static var defaultReplicaDBPath: String {
+  public static var defaultSupportDirectoryPath: String {
     let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-    let applicationSupport = homeDirectory.appendingPathComponent(
+    return homeDirectory.appendingPathComponent(
       "Library/Application Support/imsgkit",
       isDirectory: true
     )
+    .path
+  }
+
+  public static var defaultReplicaDBPath: String {
+    let applicationSupport = URL(fileURLWithPath: defaultSupportDirectoryPath, isDirectory: true)
     return applicationSupport.appendingPathComponent("replica.db").path
+  }
+
+  public static var defaultWorkingReplicaDBPath: String {
+    let applicationSupport = URL(fileURLWithPath: defaultSupportDirectoryPath, isDirectory: true)
+
+    return
+      applicationSupport
+      .appendingPathComponent("state", isDirectory: true)
+      .appendingPathComponent("replica.db")
+      .path
   }
 
   public static func build(
@@ -103,7 +118,7 @@ public enum ReplicaStore {
 
   public static func syncOnce(
     sourceDBPath: String = MessagesHealthProbe.defaultChatDBPath,
-    replicaDBPath: String = defaultReplicaDBPath,
+    replicaDBPath: String = defaultWorkingReplicaDBPath,
     builderVersion: String = "dev",
     contactLookup: ContactLookup = { _ in nil }
   ) throws -> ReplicaSyncResult {

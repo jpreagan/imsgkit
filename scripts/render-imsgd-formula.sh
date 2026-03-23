@@ -21,6 +21,7 @@ class Imsgd < Formula
   homepage "https://github.com/jpreagan/imsgkit"
   version "${version}"
   license "MIT"
+  depends_on "sqlite-rsync"
 
   on_macos do
     if Hardware::CPU.intel?
@@ -40,6 +41,14 @@ class Imsgd < Formula
         bin.install "imsgd"
       end
     end
+  end
+
+  service do
+    run [opt_bin/"imsgd", "sync"]
+    keep_alive true
+    working_dir HOMEBREW_PREFIX
+    log_path var/"log/imsgd.log"
+    error_log_path var/"log/imsgd.log"
   end
 
   test do

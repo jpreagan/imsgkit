@@ -42,10 +42,8 @@ func replicaDBExamplePathFor(goos string, homeDirectory string, xdgDataHome stri
 func resolveBackendOptions(dbPath string) (backendOptions, error) {
 	trimmedDBPath := strings.TrimSpace(dbPath)
 	if trimmedDBPath == "" {
-		return backendOptions{
-			kind: backendSource,
-			path: expandPath(defaultChatDBPath),
-		}, nil
+		homeDirectory, _ := os.UserHomeDir()
+		return resolveDefaultBackendOptionsFor(runtime.GOOS, homeDirectory, os.Getenv("XDG_DATA_HOME"))
 	}
 
 	resolvedPath := expandPath(trimmedDBPath)
@@ -57,6 +55,45 @@ func resolveBackendOptions(dbPath string) (backendOptions, error) {
 	return backendOptions{
 		kind: kind,
 		path: resolvedPath,
+	}, nil
+}
+
+func resolveDefaultBackendOptionsFor(goos string, homeDirectory string, xdgDataHome string) (backendOptions, error) {
+	replicaPath := defaultReplicaDBPathFor(goos, homeDirectory, xdgDataHome)
+
+	info, err := os.Stat(replicaPath)
+	if err == nil {
+		if info.IsDir() {
+			return backendOptions{}, fmt.Errorf("default replica db path is a directory: %s", replicaPath)
+		}
+
+		kind, err := detectBackendKind(replicaPath)
+		if err != nil {
+			return backendOptions{}, err
+		}
+		if kind != backendReplica {
+			return backendOptions{}, fmt.Errorf("default replica db path is not a replica database: %s", replicaPath)
+		}
+
+		return backendOptions{
+			kind: backendReplica,
+			path: replicaPath,
+		}, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return backendOptions{}, fmt.Errorf("stat db path: %w", err)
+	}
+
+	if goos == "darwin" {
+		return backendOptions{
+			kind: backendSource,
+			path: expandPath(defaultChatDBPath),
+		}, nil
+	}
+
+	return backendOptions{
+		kind: backendReplica,
+		path: replicaPath,
 	}, nil
 }
 

@@ -23,8 +23,8 @@ struct SyncConfiguration: Equatable {
   let remoteExecutable: String?
 
   static var defaultPath: String {
-    let replicaURL = URL(fileURLWithPath: ReplicaStore.defaultReplicaDBPath)
-    return replicaURL.deletingLastPathComponent().appendingPathComponent("config.toml").path
+    let supportURL = URL(fileURLWithPath: ReplicaStore.defaultSupportDirectoryPath, isDirectory: true)
+    return supportURL.appendingPathComponent("config.toml").path
   }
 
   static func load(at path: String = defaultPath) throws -> SyncConfiguration {

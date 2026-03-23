@@ -10,7 +10,7 @@ enum ReplicaPublishError: Error, CustomStringConvertible {
     case .sqliteRsyncNotFound:
       return "sqlite3_rsync not found"
     case .invalidPublishTarget(let target):
-      return "invalid replica publish target: \(target)"
+      return "invalid replica publish target: \(target) (expected USER@HOST:PATH)"
     case .runFailed(let message):
       return message
     }
@@ -36,7 +36,7 @@ struct ReplicaPublisher {
     remoteExecutable: String?
   ) throws {
     let trimmedTarget = publishTarget.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedTarget.isEmpty else {
+    guard Self.isRemotePublishTarget(trimmedTarget) else {
       throw ReplicaPublishError.invalidPublishTarget(publishTarget)
     }
 
@@ -114,5 +114,16 @@ struct ReplicaPublisher {
     }
 
     throw ReplicaPublishError.sqliteRsyncNotFound
+  }
+
+  private static func isRemotePublishTarget(_ target: String) -> Bool {
+    let parts = target.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+    guard parts.count == 2 else {
+      return false
+    }
+
+    let host = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+    let path = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return !host.isEmpty && !path.isEmpty
   }
 }

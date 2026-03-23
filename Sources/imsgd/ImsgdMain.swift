@@ -112,7 +112,7 @@ private let replicaSyncPollInterval: TimeInterval = 1.0
 private func sync(sourceDBPath: String, configPath: String) throws {
   let configuration = try SyncConfiguration.load(at: configPath)
   let publisher = try ReplicaPublisher(configuration: configuration)
-  let replicaDBPath = ReplicaStore.defaultReplicaDBPath
+  let replicaDBPath = ReplicaStore.defaultWorkingReplicaDBPath
   let contactLookup = makeContactLookup()
   var isFirstPass = true
   var publishState = SyncPublishState()

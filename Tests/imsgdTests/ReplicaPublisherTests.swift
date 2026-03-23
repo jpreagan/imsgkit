@@ -39,3 +39,20 @@ func replicaPublisherInvokesSQLiteRsyncWithRemoteExecutableOverride() throws {
     ]
   )
 }
+
+@Test
+func replicaPublisherRejectsHostOnlyPublishTarget() throws {
+  do {
+    _ = try ReplicaPublisher(
+      sqliteRsyncPath: "/tmp/sqlite3_rsync",
+      publishTarget: "user@remote",
+      remoteExecutable: nil
+    )
+    Issue.record("expected invalid publish target to throw")
+  } catch let error as CustomStringConvertible {
+    #expect(
+      error.description
+        == "invalid replica publish target: user@remote (expected USER@HOST:PATH)"
+    )
+  }
+}

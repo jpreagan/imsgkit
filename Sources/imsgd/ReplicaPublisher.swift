@@ -3,6 +3,7 @@ import Foundation
 enum ReplicaPublishError: Error, CustomStringConvertible {
   case sqliteRsyncNotFound
   case invalidPublishTarget(String)
+  case invalidPublishPath(String)
   case runFailed(String)
 
   var description: String {
@@ -11,6 +12,9 @@ enum ReplicaPublishError: Error, CustomStringConvertible {
       return "sqlite3_rsync not found"
     case .invalidPublishTarget(let target):
       return "invalid replica publish target: \(target) (expected USER@HOST:PATH)"
+    case .invalidPublishPath(let path):
+      return
+        "invalid replica publish path: \(path) (allowed characters: letters, numbers, /, ., _, -, ~, and spaces)"
     case .runFailed(let message):
       return message
     }
@@ -36,12 +40,12 @@ struct ReplicaPublisher {
     remoteExecutable: String?
   ) throws {
     let trimmedTarget = publishTarget.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard Self.isRemotePublishTarget(trimmedTarget) else {
+    guard let normalizedTarget = try Self.normalizePublishTarget(trimmedTarget) else {
       throw ReplicaPublishError.invalidPublishTarget(publishTarget)
     }
 
     self.sqliteRsyncPath = (sqliteRsyncPath as NSString).expandingTildeInPath
-    self.publishTarget = trimmedTarget
+    self.publishTarget = normalizedTarget
     self.remoteExecutable = remoteExecutable.map { ($0 as NSString).expandingTildeInPath }
   }
 
@@ -116,14 +120,35 @@ struct ReplicaPublisher {
     throw ReplicaPublishError.sqliteRsyncNotFound
   }
 
-  private static func isRemotePublishTarget(_ target: String) -> Bool {
+  private static func normalizePublishTarget(_ target: String) throws -> String? {
     let parts = target.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
     guard parts.count == 2 else {
-      return false
+      return nil
     }
 
     let host = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
     let path = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
-    return !host.isEmpty && !path.isEmpty
+    guard !host.isEmpty, !path.isEmpty else {
+      return nil
+    }
+    guard isSafeRemotePath(path) else {
+      throw ReplicaPublishError.invalidPublishPath(path)
+    }
+
+    return "\(host):\(escapeRemotePath(path))"
+  }
+
+  private static func isSafeRemotePath(_ path: String) -> Bool {
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-~ ")
+    for scalar in path.unicodeScalars {
+      if !allowed.contains(scalar) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private static func escapeRemotePath(_ path: String) -> String {
+    path.replacingOccurrences(of: " ", with: "\\ ")
   }
 }

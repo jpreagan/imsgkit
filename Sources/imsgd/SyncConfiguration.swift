@@ -23,7 +23,10 @@ struct SyncConfiguration: Equatable {
   let remoteExecutable: String?
 
   static var defaultPath: String {
-    let supportURL = URL(fileURLWithPath: ReplicaStore.defaultSupportDirectoryPath, isDirectory: true)
+    let supportURL = URL(
+      fileURLWithPath: ReplicaStore.defaultSupportDirectoryPath,
+      isDirectory: true
+    )
     return supportURL.appendingPathComponent("config.toml").path
   }
 

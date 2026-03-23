@@ -139,7 +139,9 @@ struct ReplicaPublisher {
   }
 
   private static func isSafeRemotePath(_ path: String) -> Bool {
-    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-~ ")
+    let allowed = CharacterSet(
+      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-~ "
+    )
     for scalar in path.unicodeScalars {
       if !allowed.contains(scalar) {
         return false

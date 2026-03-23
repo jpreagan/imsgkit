@@ -92,7 +92,9 @@ public enum ReplicaStore {
 
   public static var defaultWorkingReplicaDBPath: String {
     let applicationSupport = URL(fileURLWithPath: defaultSupportDirectoryPath, isDirectory: true)
-    return applicationSupport
+
+    return
+      applicationSupport
       .appendingPathComponent("state", isDirectory: true)
       .appendingPathComponent("replica.db")
       .path

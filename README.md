@@ -1,16 +1,8 @@
 # imsgkit
 
-`imsgkit` is a read-only CLI for exploring Messages data on your Mac.
+`imsgkit` is a CLI for reading your Messages data.
 
-It gives you a CLI for inspecting chats, reading message history, and watching new message activity. When Contacts data is available, it shows real names and labels instead of only raw phone numbers and handles.
-
-## Why This Exists
-
-`imsgkit` exists for people who want the useful parts of a Messages CLI without write access.
-
-- Read-only by design.
-- Contact-enriched output when Contacts permission is available.
-- Structured output for shell use, scripts, and other local tools.
+On a source Mac, `imsgd` reads Apple Messages data and can keep a portable `replica.db` in sync. On another macOS or Linux machine, `imsgctl` reads that replica locally. The remote machine does not need to sign in to a personal Apple ID.
 
 ## What It Can Do
 
@@ -18,74 +10,94 @@ It gives you a CLI for inspecting chats, reading message history, and watching n
 - Read message history for a chat.
 - Filter history by start and end time.
 - Include attachment metadata.
-- Watch new local message activity as it happens.
-- Include reaction events in the watch stream.
-- Emit structured JSON output from the CLI.
-
-Replica support is planned, so you can keep your Apple ID on your Mac while giving an agent or another machine read-only access to your Messages data.
+- Watch new message activity, including reactions.
+- Emit JSON output for scripts and other tools.
 
 ## Install
+
+Source Mac:
 
 ```bash
 brew install jpreagan/tap/imsgd
 brew install jpreagan/tap/imsgctl
 ```
 
-## Commands
+Remote machine:
 
-`imsgctl` starts `imsgd` locally as needed and talks to it over a framed local transport.
+- Install `imsgctl`.
+- Install `sqlite3_rsync` if the source Mac will publish a replica here.
 
-Core commands:
+## Local Use on a Mac
 
-- `imsgctl health`
-- `imsgctl chats`
-- `imsgctl history --chat-id <id>`
-- `imsgctl watch`
-
-Useful flags:
-
-- `--json` for machine-readable output
-- `--attachments` for attachment details in text output
-- `--start` and `--end` for ISO8601 time filtering
-- `--reactions` for reaction events in `watch`
-
-## Quick Start
-
-Check local access:
+`imsgctl` starts `imsgd` locally as needed for live reads.
 
 ```bash
 imsgctl health
+imsgctl chats
+imsgctl history --chat-id 42 --limit 20
+imsgctl watch --chat-id 42 --reactions
 ```
 
-List recent chats:
+By default:
+
+- On macOS, `imsgctl` prefers `~/Library/Application Support/imsgkit/replica.db` when a valid replica is present. Otherwise it falls back to `~/Library/Messages/chat.db`.
+- On Linux, `imsgctl` reads `~/.local/share/imsgkit/replica.db`, or `$XDG_DATA_HOME/imsgkit/replica.db` when `XDG_DATA_HOME` is set to an absolute path.
+
+You can always choose a specific database explicitly:
+
+```bash
+imsgctl chats --db ~/Library/Application\ Support/imsgkit/replica.db
+imsgctl history --db ~/.local/share/imsgkit/replica.db --chat-id 42
+```
+
+## Remote Replica Sync
+
+Most users will run `imsgd sync` on a signed-in Mac and `imsgctl` on a different machine.
+
+1. Create source-side sync config at `~/Library/Application Support/imsgkit/config.toml`:
+
+```toml
+[replica]
+publish = "user@remote:~/Library/Application Support/imsgkit/replica.db"
+publish_interval_seconds = 5
+remote_executable = "/opt/homebrew/bin/sqlite3_rsync"
+```
+
+Use an explicit remote path in `publish`.
+
+- macOS remote: `user@remote:~/Library/Application Support/imsgkit/replica.db`
+- Linux remote: `user@remote:~/.local/share/imsgkit/replica.db`
+
+2. Prepare the remote path and make sure `sqlite3_rsync` is installed on the remote machine.
+
+3. Start sync on the source Mac:
+
+```bash
+brew services start imsgd
+```
+
+Or run it in the foreground:
+
+```bash
+imsgd sync
+```
+
+4. Read from the replica on the remote machine:
 
 ```bash
 imsgctl chats
-imsgctl chats --json
-```
-
-Read recent history from a chat:
-
-```bash
 imsgctl history --chat-id 42 --limit 20
-imsgctl history --chat-id 42 --start 2026-03-01T00:00:00Z --attachments
-```
-
-Watch new activity:
-
-```bash
 imsgctl watch --chat-id 42 --reactions
-imsgctl watch --chat-id 42 --json
 ```
 
 ## Permissions
 
-`imsgkit` reads:
+On the source Mac, `imsgkit` reads:
 
 - `~/Library/Messages/chat.db`
 - Apple Contacts data through `Contacts.framework`
 
-If Contacts permission is unavailable, `imsgkit` still works, but it falls back to raw identifiers where necessary.
+If Contacts permission is unavailable, `imsgkit` still works, but falls back to raw identifiers where necessary.
 
 ## Development
 

@@ -4,16 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog.
 
-## [Unreleased]
+## [0.2.0]
 
 ### Added
 
-- `imsgd sync` can publish a portable, contact-enriched `replica.db` to a remote machine with `sqlite3_rsync`. [#20](https://github.com/jpreagan/imsgkit/pull/20)
+- Portable `replica.db` generation and replica-backed reads in `imsgctl`. [#18](https://github.com/jpreagan/imsgkit/pull/18)
+- `imsgd sync` for long-running replica maintenance and remote replica publishing with `sqlite3_rsync`. [#19](https://github.com/jpreagan/imsgkit/pull/19) [#20](https://github.com/jpreagan/imsgkit/pull/20)
 - Homebrew service support for running `imsgd sync`. [#20](https://github.com/jpreagan/imsgkit/pull/20)
 
 ### Changed
 
-- `imsgctl` now prefers a local `replica.db` by default when one is present, and falls back to the live Messages database on macOS. [#20](https://github.com/jpreagan/imsgkit/pull/20)
+- `imsgctl` now prefers the standard local replica path by default when a valid replica is present, and on macOS falls back to the live Messages database when no replica is available. [#20](https://github.com/jpreagan/imsgkit/pull/20)
 
 ## [0.1.0]
 

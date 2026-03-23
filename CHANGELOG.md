@@ -8,8 +8,12 @@ The format is based on Keep a Changelog.
 
 ### Added
 
-- `imsgd sync` to create and maintain a portable, contact-enriched `replica.db` from a source Messages database.
-- `imsgctl --db` support for reading either a live Messages `chat.db` or a `replica.db`.
+- `imsgd sync` can publish a portable, contact-enriched `replica.db` to a remote machine with `sqlite3_rsync`.
+- Homebrew service support for running `imsgd sync`.
+
+### Changed
+
+- `imsgctl` now prefers a local `replica.db` by default when one is present, and falls back to the live Messages database on macOS.
 
 ## [0.1.0]
 

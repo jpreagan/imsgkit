@@ -38,5 +38,9 @@ let package = Package(
       name: "MessagesStoreTests",
       dependencies: ["MessagesStore"]
     ),
+    .testTarget(
+      name: "imsgdTests",
+      dependencies: ["imsgd"]
+    ),
   ]
 )

@@ -25,8 +25,16 @@ enum Command {
 struct Options {
   let command: Command
   let dbPath: String
-  let replicaPath: String
+  let configPath: String
   let showVersion: Bool
+}
+
+private struct SyncPublishStatus {
+  let target: String
+  let attempted: Bool
+  let pending: Bool
+  let published: Bool?
+  let error: String?
 }
 
 @main
@@ -37,7 +45,7 @@ struct ImsgdMain {
       if options.showVersion {
         FileHandle.standardOutput.write(Data("\(BuildInfo.version)\n".utf8))
       } else if options.command == .sync {
-        try sync(sourceDBPath: options.dbPath, replicaDBPath: options.replicaPath)
+        try sync(sourceDBPath: options.dbPath, configPath: options.configPath)
       } else {
         try serve(dbPath: options.dbPath)
       }
@@ -50,7 +58,7 @@ struct ImsgdMain {
 
 private func parseOptions(arguments: [String]) throws -> Options {
   var dbPath = MessagesHealthProbe.defaultChatDBPath
-  var replicaPath = ReplicaStore.defaultReplicaDBPath
+  var configPath = SyncConfiguration.defaultPath
   var showVersion = false
   var command: Command = .serve
   var index = 0
@@ -72,18 +80,18 @@ private func parseOptions(arguments: [String]) throws -> Options {
       }
       dbPath = arguments[index + 1]
       index += 2
-    case "--output":
+    case "--config":
       guard index + 1 < arguments.count else {
-        throw ImsgdError.invalidArguments("missing value for --output")
+        throw ImsgdError.invalidArguments("missing value for --config")
       }
-      replicaPath = arguments[index + 1]
+      configPath = arguments[index + 1]
       index += 2
     case "--help", "-h":
       throw ImsgdError.invalidArguments(
         """
         usage:
           imsgd [--db PATH]
-          imsgd sync [--db PATH] [--output PATH]
+          imsgd sync [--db PATH] [--config PATH]
           imsgd version
         """)
     default:
@@ -94,16 +102,20 @@ private func parseOptions(arguments: [String]) throws -> Options {
   return Options(
     command: command,
     dbPath: dbPath,
-    replicaPath: replicaPath,
+    configPath: configPath,
     showVersion: showVersion
   )
 }
 
 private let replicaSyncPollInterval: TimeInterval = 1.0
 
-private func sync(sourceDBPath: String, replicaDBPath: String) throws {
+private func sync(sourceDBPath: String, configPath: String) throws {
+  let configuration = try SyncConfiguration.load(at: configPath)
+  let publisher = try ReplicaPublisher(configuration: configuration)
+  let replicaDBPath = ReplicaStore.defaultReplicaDBPath
   let contactLookup = makeContactLookup()
   var isFirstPass = true
+  var publishState = SyncPublishState()
 
   while true {
     let result = try ReplicaStore.syncOnce(
@@ -112,8 +124,46 @@ private func sync(sourceDBPath: String, replicaDBPath: String) throws {
       builderVersion: BuildInfo.version,
       contactLookup: contactLookup
     )
-    if isFirstPass || result.rebuilt || result.appliedWatchEventCount > 0 {
-      try writeSyncResult(result)
+    let changed = isFirstPass || result.rebuilt || result.appliedWatchEventCount > 0
+    if changed {
+      publishState.recordChange()
+    }
+
+    let now = Date()
+    var publishStatus: SyncPublishStatus?
+    if publishState.shouldAttemptPublish(now: now, interval: configuration.publishInterval) {
+      do {
+        try publisher.publish(replicaDBPath: result.replicaDBPath)
+        publishState.recordPublishAttempt(at: now, succeeded: true)
+        publishStatus = SyncPublishStatus(
+          target: configuration.publishTarget,
+          attempted: true,
+          pending: false,
+          published: true,
+          error: nil
+        )
+      } catch {
+        publishState.recordPublishAttempt(at: now, succeeded: false)
+        publishStatus = SyncPublishStatus(
+          target: configuration.publishTarget,
+          attempted: true,
+          pending: publishState.pending,
+          published: false,
+          error: String(describing: error)
+        )
+      }
+    } else if changed || publishState.pending {
+      publishStatus = SyncPublishStatus(
+        target: configuration.publishTarget,
+        attempted: false,
+        pending: publishState.pending,
+        published: nil,
+        error: nil
+      )
+    }
+
+    if isFirstPass || changed || publishStatus?.attempted == true {
+      try writeSyncResult(result, publishStatus: publishStatus)
     }
 
     isFirstPass = false
@@ -121,7 +171,10 @@ private func sync(sourceDBPath: String, replicaDBPath: String) throws {
   }
 }
 
-private func writeSyncResult(_ result: ReplicaSyncResult) throws {
+private func writeSyncResult(
+  _ result: ReplicaSyncResult,
+  publishStatus: SyncPublishStatus?
+) throws {
   let payload: [String: Any] = [
     "source_db_path": result.sourceDBPath,
     "replica_db_path": result.replicaDBPath,
@@ -134,8 +187,20 @@ private func writeSyncResult(_ result: ReplicaSyncResult) throws {
     "synced_at": result.syncedAt,
     "rebuilt": result.rebuilt,
   ]
+  var mutablePayload = payload
+  if let publishStatus {
+    mutablePayload["publish_target"] = publishStatus.target
+    mutablePayload["publish_attempted"] = publishStatus.attempted
+    mutablePayload["publish_pending"] = publishStatus.pending
+    if let published = publishStatus.published {
+      mutablePayload["published"] = published
+    }
+    if let error = publishStatus.error {
+      mutablePayload["publish_error"] = error
+    }
+  }
   let data = try JSONSerialization.data(
-    withJSONObject: payload,
+    withJSONObject: mutablePayload,
     options: [.sortedKeys]
   )
   FileHandle.standardOutput.write(data)

@@ -27,6 +27,20 @@ Remote machine:
 - Install `imsgctl`.
 - Install `sqlite3_rsync` if the source Mac will publish a replica here.
 
+## Agent Skill
+
+This repo includes an agent skill for `imsgctl` at `skills/imsgctl`.
+
+Install it from this public repo with:
+
+```bash
+npx skills add jpreagan/imsgkit
+```
+
+The installed skill helps an agent use `imsgctl` to check access, list chats, inspect message history, include attachment metadata, and watch new activity.
+
+Some agents load new skills only when a session starts. If the skill does not appear immediately, start a new session or refresh skills in the agent runtime.
+
 ## Local Use on a Mac
 
 `imsgctl` starts `imsgd` locally as needed for live reads.

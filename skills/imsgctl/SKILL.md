@@ -4,9 +4,17 @@ description: Read Apple Messages data with imsgctl: check access, list chats, in
 metadata:
   openclaw:
     homepage: https://github.com/jpreagan/imsgkit
+    os:
+      - darwin
+      - linux
     requires:
       bins:
         - imsgctl
+    install:
+      - kind: brew
+        formula: jpreagan/tap/imsgctl
+        bins:
+          - imsgctl
 ---
 
 # imsgctl

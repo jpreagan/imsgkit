@@ -1,6 +1,6 @@
 ---
 name: imsgctl
-description: Read Apple Messages data with imsgctl: check access, list chats, inspect message history, filter by time, include attachment metadata, and watch new activity from the local data available to imsgctl.
+description: "Read Apple Messages data with imsgctl: check access, list chats, inspect message history, filter by time, include attachment metadata, and watch new activity from the local data available to imsgctl."
 metadata:
   openclaw:
     homepage: https://github.com/jpreagan/imsgkit

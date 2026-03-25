@@ -148,7 +148,7 @@ func isReplicaDatabase(path string) (bool, error) {
 		`SELECT value FROM metadata WHERE key = 'schema_version'`,
 	).Scan(&schemaVersion)
 	if err == nil {
-		return schemaVersion == "1", nil
+		return schemaVersion == "2", nil
 	}
 	if err == sql.ErrNoRows {
 		return false, nil

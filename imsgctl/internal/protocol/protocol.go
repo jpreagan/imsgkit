@@ -3,7 +3,7 @@ package protocol
 import "encoding/json"
 
 const (
-	ProtocolVersion = "0.1.0"
+	ProtocolVersion = "0.2.0"
 	ServerName      = "imsgd"
 
 	KindRequest  = "request"
@@ -115,14 +115,39 @@ type ChatMessage struct {
 }
 
 type AttachmentMeta struct {
-	Filename     string `json:"filename"`
-	TransferName string `json:"transfer_name"`
-	UTI          string `json:"uti"`
-	MimeType     string `json:"mime_type"`
-	TotalBytes   int64  `json:"total_bytes"`
-	IsSticker    bool   `json:"is_sticker"`
-	OriginalPath string `json:"original_path"`
-	Missing      bool   `json:"missing"`
+	Filename            string  `json:"filename"`
+	TransferName        string  `json:"transfer_name"`
+	UTI                 string  `json:"uti"`
+	MimeType            string  `json:"mime_type"`
+	TotalBytes          int64   `json:"total_bytes"`
+	IsSticker           bool    `json:"is_sticker"`
+	Path                string  `json:"path"`
+	Missing             bool    `json:"missing"`
+	ReplicaRelativePath *string `json:"replica_relative_path"`
+}
+
+func (attachment AttachmentMeta) MarshalJSON() ([]byte, error) {
+	type publicAttachmentMeta struct {
+		Filename     string `json:"filename"`
+		TransferName string `json:"transfer_name"`
+		UTI          string `json:"uti"`
+		MimeType     string `json:"mime_type"`
+		TotalBytes   int64  `json:"total_bytes"`
+		IsSticker    bool   `json:"is_sticker"`
+		Path         string `json:"path"`
+		Missing      bool   `json:"missing"`
+	}
+
+	return json.Marshal(publicAttachmentMeta{
+		Filename:     attachment.Filename,
+		TransferName: attachment.TransferName,
+		UTI:          attachment.UTI,
+		MimeType:     attachment.MimeType,
+		TotalBytes:   attachment.TotalBytes,
+		IsSticker:    attachment.IsSticker,
+		Path:         attachment.Path,
+		Missing:      attachment.Missing,
+	})
 }
 
 type ReactionMeta struct {

@@ -46,7 +46,7 @@ func TestFormatAttachmentNamePrefersTransferName(t *testing.T) {
 	attachment := protocol.AttachmentMeta{
 		Filename:     "~/Library/Messages/Attachments/test/photo.heic",
 		TransferName: "photo.heic",
-		OriginalPath: "/Users/test/Library/Messages/Attachments/test/photo.heic",
+		Path:         "/Users/test/Library/Messages/Attachments/test/photo.heic",
 	}
 
 	if got := formatAttachmentName(attachment); got != "photo.heic" {
@@ -61,5 +61,15 @@ func TestFormatAttachmentNameFallsBackToFilenameBase(t *testing.T) {
 
 	if got := formatAttachmentName(attachment); got != "photo.heic" {
 		t.Fatalf("formatAttachmentName() = %q, want %q", got, "photo.heic")
+	}
+}
+
+func TestFormatAttachmentPathPrefersResolvedPath(t *testing.T) {
+	attachment := protocol.AttachmentMeta{
+		Path: "/tmp/attachments/test/photo.heic",
+	}
+
+	if got := formatAttachmentPath(attachment); got != "/tmp/attachments/test/photo.heic" {
+		t.Fatalf("formatAttachmentPath() = %q, want %q", got, "/tmp/attachments/test/photo.heic")
 	}
 }

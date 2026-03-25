@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ProtocolConstants {
-  public static let protocolVersion = "0.1.0"
+  public static let protocolVersion = "0.2.0"
   public static let serverName = "imsgd"
 
   public static let requestKind = "request"

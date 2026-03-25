@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 )
 
@@ -84,5 +85,27 @@ func TestEventEnvelopeRoundTrip(t *testing.T) {
 
 	if event.Reaction == nil || event.Reaction.TargetGUID != "message-101" {
 		t.Fatalf("watch event mismatch: %#v", event)
+	}
+}
+
+func TestAttachmentMetaMarshalJSONOmitsReplicaRelativePath(t *testing.T) {
+	t.Parallel()
+
+	relativePath := "chat/photo.heic"
+	payload, err := json.Marshal(AttachmentMeta{
+		Filename:            "photo.heic",
+		Path:                "/tmp/attachments/chat/photo.heic",
+		Missing:             false,
+		ReplicaRelativePath: &relativePath,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	if bytes.Contains(payload, []byte("replica_relative_path")) {
+		t.Fatalf("payload = %s, want replica_relative_path omitted", payload)
+	}
+	if !bytes.Contains(payload, []byte(`"path":"/tmp/attachments/chat/photo.heic"`)) {
+		t.Fatalf("payload = %s, want path field present", payload)
 	}
 }

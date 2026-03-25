@@ -33,7 +33,7 @@ func TestResolveDefaultBackendOptionsForDarwinPrefersReplicaDB(t *testing.T) {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		);
-		INSERT INTO metadata (key, value) VALUES ('schema_version', '1');
+		INSERT INTO metadata (key, value) VALUES ('schema_version', '2');
 	`)
 
 	backend, err := resolveDefaultBackendOptionsFor("darwin", home, "")
@@ -71,7 +71,7 @@ func TestResolveBackendOptionsDetectsReplicaDB(t *testing.T) {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		);
-		INSERT INTO metadata (key, value) VALUES ('schema_version', '1');
+		INSERT INTO metadata (key, value) VALUES ('schema_version', '2');
 	`)
 
 	backend, err := resolveBackendOptions(path)

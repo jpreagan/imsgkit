@@ -181,7 +181,7 @@ func printWatchMessage(cmd *cobra.Command, message protocol.ChatMessage, showAtt
 				formatAttachmentName(attachment),
 				attachment.MimeType,
 				attachment.Missing,
-				attachment.OriginalPath,
+				formatAttachmentPath(attachment),
 			)
 		}
 		return

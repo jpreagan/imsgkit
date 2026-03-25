@@ -50,9 +50,10 @@ func historyListReturnsNewestMessagesFirst() throws {
             mimeType: "image/heic",
             totalBytes: 1234,
             isSticker: false,
-            originalPath: (NSString(string: "~/Library/Messages/Attachments/test/photo.heic"))
+            path: (NSString(string: "~/Library/Messages/Attachments/test/photo.heic"))
               .expandingTildeInPath,
-            missing: true
+            missing: true,
+            replicaRelativePath: "test/photo.heic"
           )
         ],
         reactions: [

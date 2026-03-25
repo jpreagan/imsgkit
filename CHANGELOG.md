@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+
+- Referenced attachment mirroring alongside published replicas, with mirrored files stored in a sibling `attachments/` directory next to `replica.db`.
+
+### Changed
+
+- Replica-backed attachment output now includes only the consumer-local `path` field and does not expose internal replica attachment keys or source-machine attachment paths.
+- Attachment `missing` status is now evaluated on the machine reading the replica instead of being frozen from the source Mac.
+
 ## [0.2.0]
 
 ### Added

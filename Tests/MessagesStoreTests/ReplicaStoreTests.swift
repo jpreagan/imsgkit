@@ -52,8 +52,75 @@ func replicaBuildMaterializesChatsMessagesAndWatchEvents() throws {
       .contains("\"emoji\":\"❤️\"")
   )
   #expect(
+    !(try stringScalar(database, sql: "SELECT attachments_json FROM messages WHERE message_id = 101"))
+      .contains("\"original_path\"")
+  )
+  #expect(
+    !(try stringScalar(database, sql: "SELECT attachments_json FROM messages WHERE message_id = 101"))
+      .contains("\"path\"")
+  )
+  #expect(
+    (try stringScalar(database, sql: "SELECT attachments_json FROM messages WHERE message_id = 101"))
+      .contains("\"replica_relative_path\"")
+  )
+  #expect(
     try stringScalar(database, sql: "SELECT payload_json FROM watch_events WHERE source_rowid = 101")
       .contains("\"emoji\":\"❤️\"")
+  )
+  #expect(
+    !(try stringScalar(database, sql: "SELECT payload_json FROM watch_events WHERE source_rowid = 101"))
+      .contains("\"original_path\"")
+  )
+  #expect(
+    !(try stringScalar(database, sql: "SELECT payload_json FROM watch_events WHERE source_rowid = 101"))
+      .contains("\"path\"")
+  )
+  #expect(
+    (try stringScalar(database, sql: "SELECT payload_json FROM watch_events WHERE source_rowid = 101"))
+      .contains("\"replica_relative_path\"")
+  )
+}
+
+@Test
+func replicaBuildMaterializesMessageAttachmentReferences() throws {
+  let relativeDirectory = "Library/Messages/Attachments/imsgkit-tests-\(UUID().uuidString)"
+  let relativePath = "\(relativeDirectory)/photo.heic"
+  let attachmentDirectory = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(relativeDirectory, isDirectory: true)
+  try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
+  defer {
+    try? FileManager.default.removeItem(at: attachmentDirectory)
+  }
+
+  let attachmentFileURL = attachmentDirectory.appendingPathComponent("photo.heic")
+  try Data("heic".utf8).write(to: attachmentFileURL)
+
+  let sourceDBURL = try makeReplicaSourceDatabase(attachmentFilename: "~/" + relativePath)
+  let replicaDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: replicaDirectory, withIntermediateDirectories: true)
+  let replicaDBURL = replicaDirectory.appendingPathComponent("replica.db")
+
+  _ = try ReplicaStore.build(
+    sourceDBPath: sourceDBURL.path,
+    replicaDBPath: replicaDBURL.path,
+    builderVersion: "test"
+  )
+
+  var database: OpaquePointer?
+  #expect(sqlite3_open_v2(replicaDBURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK)
+  defer {
+    sqlite3_close(database)
+  }
+
+  #expect(try scalar(database, sql: "SELECT COUNT(*) FROM message_attachments") == 1)
+  #expect(
+    !(try stringScalar(database, sql: "SELECT sql FROM sqlite_master WHERE name = 'message_attachments'"))
+      .contains("original_path")
+  )
+  #expect(
+    try stringScalar(database, sql: "SELECT replica_relative_path FROM message_attachments LIMIT 1")
+      == "\(attachmentDirectory.lastPathComponent)/photo.heic"
   )
 }
 
@@ -157,7 +224,9 @@ func replicaSyncAppendsNewEventsAndAdvancesWatermark() throws {
   )
 }
 
-private func makeReplicaSourceDatabase() throws -> URL {
+private func makeReplicaSourceDatabase(
+  attachmentFilename: String = "~/Library/Messages/Attachments/test/photo.heic"
+) throws -> URL {
   let tempDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString, isDirectory: true)
   try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
@@ -226,6 +295,8 @@ private func makeReplicaSourceDatabase() throws -> URL {
       """
   )
 
+  let escapedAttachmentFilename = attachmentFilename.replacingOccurrences(of: "'", with: "''")
+
   try execute(
     database,
     sql: """
@@ -250,6 +321,12 @@ private func makeReplicaSourceDatabase() throws -> URL {
         (10, 101, 2000000000),
         (10, 102, 2500000000),
         (11, 103, 3000000000);
+      INSERT INTO attachment (
+        ROWID, guid, filename, uti, mime_type, transfer_name, total_bytes, is_sticker
+      ) VALUES
+        (1, 'attachment-1', '\(escapedAttachmentFilename)', 'public.heic', 'image/heic', 'photo.heic', 1234, 0);
+      INSERT INTO message_attachment_join (message_id, attachment_id) VALUES
+        (101, 1);
       """
   )
 

@@ -137,7 +137,7 @@ func runHistory(
 						formatAttachmentName(attachment),
 						attachment.MimeType,
 						attachment.Missing,
-						attachment.OriginalPath,
+						formatAttachmentPath(attachment),
 					)
 				}
 			} else {
@@ -202,8 +202,16 @@ func formatAttachmentName(attachment protocol.AttachmentMeta) string {
 	if attachment.Filename != "" {
 		return filepath.Base(attachment.Filename)
 	}
-	if attachment.OriginalPath != "" {
-		return filepath.Base(attachment.OriginalPath)
+	if attachment.Path != "" {
+		return filepath.Base(attachment.Path)
+	}
+
+	return "-"
+}
+
+func formatAttachmentPath(attachment protocol.AttachmentMeta) string {
+	if attachment.Path != "" {
+		return attachment.Path
 	}
 
 	return "-"

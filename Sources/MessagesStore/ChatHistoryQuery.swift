@@ -9,8 +9,9 @@ public struct ChatMessage: Sendable, Equatable {
     public let mimeType: String
     public let totalBytes: Int64
     public let isSticker: Bool
-    public let originalPath: String
+    public let path: String
     public let missing: Bool
+    let replicaRelativePath: String?
 
     public init(
       filename: String,
@@ -19,8 +20,9 @@ public struct ChatMessage: Sendable, Equatable {
       mimeType: String,
       totalBytes: Int64,
       isSticker: Bool,
-      originalPath: String,
-      missing: Bool
+      path: String,
+      missing: Bool,
+      replicaRelativePath: String? = nil
     ) {
       self.filename = filename
       self.transferName = transferName
@@ -28,8 +30,9 @@ public struct ChatMessage: Sendable, Equatable {
       self.mimeType = mimeType
       self.totalBytes = totalBytes
       self.isSticker = isSticker
-      self.originalPath = originalPath
+      self.path = path
       self.missing = missing
+      self.replicaRelativePath = replicaRelativePath
     }
 
     public var jsonObject: [String: Any] {
@@ -40,7 +43,7 @@ public struct ChatMessage: Sendable, Equatable {
         "mime_type": mimeType,
         "total_bytes": totalBytes,
         "is_sticker": isSticker,
-        "original_path": originalPath,
+        "path": path,
         "missing": missing,
       ]
     }
@@ -506,8 +509,9 @@ public enum ChatHistoryQuery {
           mimeType: sqliteText(statement, column: 3),
           totalBytes: sqlite3_column_int64(statement, 4),
           isSticker: sqlite3_column_int64(statement, 5) != 0,
-          originalPath: resolved.resolved,
-          missing: resolved.missing
+          path: resolved.path,
+          missing: resolved.missing,
+          replicaRelativePath: resolved.replicaRelativePath
         )
       )
     }

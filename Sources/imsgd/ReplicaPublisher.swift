@@ -2,6 +2,7 @@ import Foundation
 
 enum ReplicaPublishError: Error, CustomStringConvertible {
   case sqliteRsyncNotFound
+  case rsyncNotFound
   case invalidPublishTarget(String)
   case invalidPublishPath(String)
   case runFailed(String)
@@ -10,6 +11,8 @@ enum ReplicaPublishError: Error, CustomStringConvertible {
     switch self {
     case .sqliteRsyncNotFound:
       return "sqlite3_rsync not found"
+    case .rsyncNotFound:
+      return "rsync not found"
     case .invalidPublishTarget(let target):
       return "invalid replica publish target: \(target) (expected USER@HOST:PATH)"
     case .invalidPublishPath(let path):
@@ -21,14 +24,35 @@ enum ReplicaPublishError: Error, CustomStringConvertible {
   }
 }
 
+struct PublishTarget {
+  let host: String
+  let path: String
+
+  var replicaTarget: String {
+    "\(host):\(ReplicaPublisher.escapeRemotePath(path))"
+  }
+
+  var attachmentPath: String {
+    let directory = (path as NSString).deletingLastPathComponent
+    let baseDirectory = directory.isEmpty ? "." : directory
+    return (baseDirectory as NSString).appendingPathComponent(ReplicaAttachmentMirror.directoryName)
+  }
+
+  var attachmentTarget: String {
+    "\(host):\(ReplicaPublisher.escapeRemotePath(attachmentPath))"
+  }
+}
+
 struct ReplicaPublisher {
   let sqliteRsyncPath: String
-  let publishTarget: String
+  let rsyncPath: String
+  let publishTarget: PublishTarget
   let remoteExecutable: String?
 
   init(configuration: SyncConfiguration) throws {
     try self.init(
       sqliteRsyncPath: Self.resolveSQLiteRsyncPath(),
+      rsyncPath: Self.resolveRsyncPath(),
       publishTarget: configuration.publishTarget,
       remoteExecutable: configuration.remoteExecutable
     )
@@ -36,6 +60,7 @@ struct ReplicaPublisher {
 
   init(
     sqliteRsyncPath: String,
+    rsyncPath: String,
     publishTarget: String,
     remoteExecutable: String?
   ) throws {
@@ -45,22 +70,59 @@ struct ReplicaPublisher {
     }
 
     self.sqliteRsyncPath = (sqliteRsyncPath as NSString).expandingTildeInPath
+    self.rsyncPath = (rsyncPath as NSString).expandingTildeInPath
     self.publishTarget = normalizedTarget
     self.remoteExecutable = remoteExecutable.map { ($0 as NSString).expandingTildeInPath }
   }
 
   func publish(replicaDBPath: String) throws {
+    let localAttachmentRoot = ReplicaAttachmentMirror.attachmentRoot(
+      forReplicaDBPath: replicaDBPath
+    )
+    try publishAttachments(localAttachmentRoot: localAttachmentRoot, delete: false)
+    try publishReplicaDB(replicaDBPath: replicaDBPath)
+    try publishAttachments(localAttachmentRoot: localAttachmentRoot, delete: true)
+  }
+
+  private func publishReplicaDB(replicaDBPath: String) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: sqliteRsyncPath)
 
-    var arguments = [((replicaDBPath as NSString).expandingTildeInPath), publishTarget]
+    var arguments = [
+      ((replicaDBPath as NSString).expandingTildeInPath),
+      publishTarget.replicaTarget,
+    ]
     if let remoteExecutable, !remoteExecutable.isEmpty {
       arguments.append(contentsOf: ["--exe", remoteExecutable])
     }
     process.arguments = arguments
+    try run(process: process, name: "sqlite3_rsync")
+  }
 
+  private func publishAttachments(localAttachmentRoot: String, delete: Bool) throws {
+    try FileManager.default.createDirectory(
+      at: URL(fileURLWithPath: localAttachmentRoot, isDirectory: true),
+      withIntermediateDirectories: true
+    )
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: rsyncPath)
+
+    var arguments = ["-a"]
+    if delete {
+      arguments.append("--delete")
+    }
+    arguments.append(contentsOf: [
+      localAttachmentRoot + "/",
+      publishTarget.attachmentTarget + "/",
+    ])
+    process.arguments = arguments
+    try run(process: process, name: "rsync")
+  }
+
+  private func run(process: Process, name: String) throws {
     let stderrURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("imsgd-sqlite3_rsync-\(UUID().uuidString).stderr", isDirectory: false)
+      .appendingPathComponent("imsgd-\(name)-\(UUID().uuidString).stderr", isDirectory: false)
     FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
     let stderrHandle = try FileHandle(forWritingTo: stderrURL)
     defer {
@@ -70,11 +132,10 @@ struct ReplicaPublisher {
 
     process.standardOutput = FileHandle.nullDevice
     process.standardError = stderrHandle
-
     do {
       try process.run()
     } catch {
-      throw ReplicaPublishError.runFailed("start sqlite3_rsync: \(error.localizedDescription)")
+      throw ReplicaPublishError.runFailed("start \(name): \(error.localizedDescription)")
     }
 
     process.waitUntilExit()
@@ -86,15 +147,42 @@ struct ReplicaPublisher {
 
     guard process.terminationStatus == 0 else {
       if let stderrText, !stderrText.isEmpty {
-        throw ReplicaPublishError.runFailed("sqlite3_rsync failed: \(stderrText)")
+        throw ReplicaPublishError.runFailed("\(name) failed: \(stderrText)")
       }
       throw ReplicaPublishError.runFailed(
-        "sqlite3_rsync failed with exit status \(process.terminationStatus)"
+        "\(name) failed with exit status \(process.terminationStatus)"
       )
     }
   }
 
   static func resolveSQLiteRsyncPath() throws -> String {
+    try resolveExecutable(
+      named: "sqlite3_rsync",
+      defaults: [
+        "/opt/homebrew/bin/sqlite3_rsync",
+        "/usr/local/bin/sqlite3_rsync",
+      ],
+      notFoundError: .sqliteRsyncNotFound
+    )
+  }
+
+  static func resolveRsyncPath() throws -> String {
+    try resolveExecutable(
+      named: "rsync",
+      defaults: [
+        "/usr/bin/rsync",
+        "/opt/homebrew/bin/rsync",
+        "/usr/local/bin/rsync",
+      ],
+      notFoundError: .rsyncNotFound
+    )
+  }
+
+  private static func resolveExecutable(
+    named name: String,
+    defaults: [String],
+    notFoundError: ReplicaPublishError
+  ) throws -> String {
     let fileManager = FileManager.default
     let environment = ProcessInfo.processInfo.environment
 
@@ -105,11 +193,10 @@ struct ReplicaPublisher {
         .split(separator: ":")
         .map { String($0) }
         .filter { !$0.isEmpty }
-        .map { ($0 as NSString).appendingPathComponent("sqlite3_rsync") }
+        .map { ($0 as NSString).appendingPathComponent(name) }
       candidates.append(contentsOf: pathCandidates)
     }
-    candidates.append("/opt/homebrew/bin/sqlite3_rsync")
-    candidates.append("/usr/local/bin/sqlite3_rsync")
+    candidates.append(contentsOf: defaults)
 
     for candidate in candidates {
       if fileManager.isExecutableFile(atPath: candidate) {
@@ -117,10 +204,10 @@ struct ReplicaPublisher {
       }
     }
 
-    throw ReplicaPublishError.sqliteRsyncNotFound
+    throw notFoundError
   }
 
-  private static func normalizePublishTarget(_ target: String) throws -> String? {
+  private static func normalizePublishTarget(_ target: String) throws -> PublishTarget? {
     let parts = target.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
     guard parts.count == 2 else {
       return nil
@@ -135,7 +222,7 @@ struct ReplicaPublisher {
       throw ReplicaPublishError.invalidPublishPath(path)
     }
 
-    return "\(host):\(escapeRemotePath(path))"
+    return PublishTarget(host: host, path: path)
   }
 
   private static func isSafeRemotePath(_ path: String) -> Bool {
@@ -150,7 +237,7 @@ struct ReplicaPublisher {
     return true
   }
 
-  private static func escapeRemotePath(_ path: String) -> String {
+  static func escapeRemotePath(_ path: String) -> String {
     path.replacingOccurrences(of: " ", with: "\\ ")
   }
 }

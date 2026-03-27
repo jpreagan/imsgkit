@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -61,6 +62,79 @@ func TestGetHistoryIncludesExactStartBoundary(t *testing.T) {
 	}
 	if messages[1].GUID != "message-100" {
 		t.Fatalf("messages[1].GUID = %q, want %q", messages[1].GUID, "message-100")
+	}
+}
+
+func TestGetHistoryResolvesReplicaAttachmentPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replica.db")
+	attachmentRoot := filepath.Join(filepath.Dir(path), "attachments", "chat")
+	if err := os.MkdirAll(attachmentRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	localAttachmentPath := filepath.Join(attachmentRoot, "photo.heic")
+	if err := os.WriteFile(localAttachmentPath, []byte("heic"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	db := openSQLiteDB(t, path)
+	defer db.Close()
+
+	execSQLite(t, db, `
+		CREATE TABLE messages (
+			message_id INTEGER PRIMARY KEY,
+			chat_id INTEGER NOT NULL,
+			guid TEXT NOT NULL,
+			reply_to_guid TEXT,
+			thread_originator_guid TEXT,
+			sender TEXT NOT NULL,
+			sender_name TEXT,
+			sender_label TEXT,
+			from_me INTEGER NOT NULL,
+			text TEXT NOT NULL,
+			created_at TEXT,
+			service TEXT NOT NULL,
+			destination_caller_id TEXT,
+			attachments_json TEXT NOT NULL,
+			reactions_json TEXT NOT NULL
+		);
+	`)
+
+	replicaRelativePath := "chat/photo.heic"
+	attachmentsJSON, err := json.Marshal([]map[string]any{
+		{
+			"filename":              "~/Library/Messages/Attachments/chat/photo.heic",
+			"transfer_name":         "photo.heic",
+			"mime_type":             "image/heic",
+			"missing":               false,
+			"replica_relative_path": replicaRelativePath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	execSQLite(t, db, `
+		INSERT INTO messages (
+			message_id, chat_id, guid, sender, from_me, text, created_at, service, attachments_json, reactions_json
+		) VALUES
+			(100, 10, 'message-100', '+12125550100', 0, 'with attachment', '2001-01-01T00:00:01.000Z', 'iMessage', '`+string(attachmentsJSON)+`', '[]');
+	`)
+
+	messages, err := GetHistory(path, 10, 10, nil, nil)
+	if err != nil {
+		t.Fatalf("GetHistory() error = %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1", len(messages))
+	}
+	if len(messages[0].Attachments) != 1 {
+		t.Fatalf("len(messages[0].Attachments) = %d, want 1", len(messages[0].Attachments))
+	}
+	if got := messages[0].Attachments[0].Path; got != localAttachmentPath {
+		t.Fatalf("messages[0].Attachments[0].Path = %q, want %q", got, localAttachmentPath)
+	}
+	if messages[0].Attachments[0].Missing {
+		t.Fatalf("messages[0].Attachments[0].Missing = true, want false")
 	}
 }
 
@@ -144,6 +218,97 @@ func TestWatchIncludesExactStartBoundary(t *testing.T) {
 	}
 	if events[1].Message == nil || events[1].Message.GUID != "message-101" {
 		t.Fatalf("events[1] = %#v, want second message", events[1])
+	}
+}
+
+func TestWatchResolvesReplicaAttachmentPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replica.db")
+	attachmentRoot := filepath.Join(filepath.Dir(path), "attachments", "chat")
+	if err := os.MkdirAll(attachmentRoot, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	localAttachmentPath := filepath.Join(attachmentRoot, "photo.heic")
+	if err := os.WriteFile(localAttachmentPath, []byte("heic"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	db := openSQLiteDB(t, path)
+	defer db.Close()
+
+	execSQLite(t, db, `
+		CREATE TABLE watch_events (
+			source_rowid INTEGER PRIMARY KEY,
+			event_type TEXT NOT NULL,
+			chat_id INTEGER NOT NULL,
+			created_at TEXT,
+			payload_json TEXT NOT NULL
+		);
+	`)
+
+	replicaRelativePath := "chat/photo.heic"
+	payload, err := json.Marshal(map[string]any{
+		"event": "message",
+		"message": map[string]any{
+			"id":         100,
+			"chat_id":    10,
+			"guid":       "message-100",
+			"sender":     "+12125550100",
+			"text":       "with attachment",
+			"created_at": "2001-01-01T00:00:01.000Z",
+			"service":    "iMessage",
+			"attachments": []map[string]any{
+				{
+					"filename":              "~/Library/Messages/Attachments/chat/photo.heic",
+					"transfer_name":         "photo.heic",
+					"mime_type":             "image/heic",
+					"missing":               false,
+					"replica_relative_path": replicaRelativePath,
+				},
+			},
+			"reactions": []any{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO watch_events (source_rowid, event_type, chat_id, created_at, payload_json) VALUES (?, 'message', 10, ?, ?)`,
+		100,
+		"2001-01-01T00:00:01.000Z",
+		string(payload),
+	); err != nil {
+		t.Fatalf("db.Exec() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	start := "2001-01-01T00:00:01Z"
+	end := "2001-01-01T00:00:02Z"
+
+	var events []protocol.WatchEvent
+	err = Watch(ctx, path, protocol.WatchParams{
+		Start: &start,
+		End:   &end,
+	}, func(event protocol.WatchEvent) error {
+		events = append(events, event)
+		cancel()
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Watch() error = %v, want nil or context.Canceled", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(events))
+	}
+	if events[0].Message == nil || len(events[0].Message.Attachments) != 1 {
+		t.Fatalf("events[0].Message.Attachments = %#v, want 1 attachment", events[0].Message)
+	}
+	if got := events[0].Message.Attachments[0].Path; got != localAttachmentPath {
+		t.Fatalf("events[0].Message.Attachments[0].Path = %q, want %q", got, localAttachmentPath)
+	}
+	if events[0].Message.Attachments[0].Missing {
+		t.Fatalf("events[0].Message.Attachments[0].Missing = true, want false")
 	}
 }
 

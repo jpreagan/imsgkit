@@ -124,8 +124,12 @@ private func sync(sourceDBPath: String, configPath: String) throws {
       builderVersion: BuildInfo.version,
       contactLookup: contactLookup
     )
-    let changed = isFirstPass || result.rebuilt || result.appliedWatchEventCount > 0
-    if changed {
+    let replicaChanged = isFirstPass || result.rebuilt || result.appliedWatchEventCount > 0
+    let attachmentsChanged = isFirstPass || result.rebuilt || result.appliedMessageCount > 0
+    if attachmentsChanged {
+      try ReplicaAttachmentMirror.refresh(replicaDBPath: result.replicaDBPath)
+    }
+    if replicaChanged {
       publishState.recordChange()
     }
 
@@ -152,7 +156,7 @@ private func sync(sourceDBPath: String, configPath: String) throws {
           error: String(describing: error)
         )
       }
-    } else if changed || publishState.pending {
+    } else if replicaChanged || publishState.pending {
       publishStatus = SyncPublishStatus(
         target: configuration.publishTarget,
         attempted: false,
@@ -162,7 +166,7 @@ private func sync(sourceDBPath: String, configPath: String) throws {
       )
     }
 
-    if isFirstPass || changed || publishStatus?.attempted == true {
+    if isFirstPass || replicaChanged || publishStatus?.attempted == true {
       try writeSyncResult(result, publishStatus: publishStatus)
     }
 

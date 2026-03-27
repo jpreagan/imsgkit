@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/jpreagan/imsgkit/imsgctl/internal/protocol"
 )
 
-const schemaVersion = "1"
+const schemaVersion = "2"
 
 func Health(path string) (protocol.HealthResponse, error) {
 	info, err := os.Stat(path)
@@ -200,6 +201,7 @@ func GetHistory(
 		if err != nil {
 			return nil, err
 		}
+		normalizeReplicaMessage(path, &message)
 		messages = append(messages, message)
 	}
 	if err := rows.Err(); err != nil {
@@ -227,7 +229,7 @@ func Watch(
 	}
 
 	if params.Start != nil || params.End != nil {
-		if err := replayWatchBatch(db, 0, cursor, params, handle); err != nil {
+		if err := replayWatchBatch(path, db, 0, cursor, params, handle); err != nil {
 			return err
 		}
 	}
@@ -253,7 +255,7 @@ func Watch(
 				continue
 			}
 
-			if err := replayWatchBatch(db, cursor, upper, params, handle); err != nil {
+			if err := replayWatchBatch(path, db, cursor, upper, params, handle); err != nil {
 				return err
 			}
 			cursor = upper
@@ -262,6 +264,7 @@ func Watch(
 }
 
 func replayWatchBatch(
+	replicaDBPath string,
 	db *sql.DB,
 	afterRowID int64,
 	throughRowID int64,
@@ -305,6 +308,7 @@ func replayWatchBatch(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			return fmt.Errorf("decode watch event: %w", err)
 		}
+		normalizeReplicaEvent(replicaDBPath, &event)
 
 		if err := handle(event); err != nil {
 			return err
@@ -391,4 +395,59 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func normalizeReplicaEvent(replicaDBPath string, event *protocol.WatchEvent) {
+	if event == nil || event.Message == nil {
+		return
+	}
+	normalizeReplicaMessage(replicaDBPath, event.Message)
+}
+
+func normalizeReplicaMessage(replicaDBPath string, message *protocol.ChatMessage) {
+	if message == nil || len(message.Attachments) == 0 {
+		return
+	}
+	message.Attachments = resolveReplicaAttachments(replicaDBPath, message.Attachments)
+}
+
+func resolveReplicaAttachments(
+	replicaDBPath string,
+	attachments []protocol.AttachmentMeta,
+) []protocol.AttachmentMeta {
+	if len(attachments) == 0 {
+		return attachments
+	}
+
+	attachmentRoot := filepath.Join(filepath.Dir(replicaDBPath), "attachments")
+	resolved := make([]protocol.AttachmentMeta, len(attachments))
+	for i, attachment := range attachments {
+		if attachment.ReplicaRelativePath != nil && strings.TrimSpace(*attachment.ReplicaRelativePath) != "" {
+			attachment.Path = filepath.Join(
+				attachmentRoot,
+				filepath.FromSlash(strings.TrimSpace(*attachment.ReplicaRelativePath)),
+			)
+			attachment.Missing = attachmentPathMissing(attachment.Path)
+		} else {
+			attachment.Path = ""
+			attachment.Missing = true
+		}
+		resolved[i] = attachment
+	}
+
+	return resolved
+}
+
+func attachmentPathMissing(path string) bool {
+	trimmedPath := strings.TrimSpace(path)
+	if trimmedPath == "" {
+		return true
+	}
+
+	info, err := os.Stat(trimmedPath)
+	if err != nil {
+		return true
+	}
+
+	return info.IsDir()
 }

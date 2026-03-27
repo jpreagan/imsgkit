@@ -67,12 +67,13 @@ public struct ReplicaSyncResult: Sendable, Equatable {
 }
 
 public enum ReplicaStore {
-  public static let schemaVersion = "1"
+  public static let schemaVersion = "2"
   private static let batchLimit = 500
   private static let requiredTables: Set<String> = [
     "metadata",
     "chats",
     "messages",
+    "message_attachments",
     "watch_events",
   ]
 
@@ -205,6 +206,7 @@ public enum ReplicaStore {
               appliedMessageCount += 1
               updatedChatIDs.insert(message.chatID)
               try upsertMessage(message, into: replicaDatabase)
+              try replaceMessageAttachments(message, in: replicaDatabase)
               try updateMessageWatchEvent(message, in: replicaDatabase)
             }
 
@@ -230,6 +232,7 @@ public enum ReplicaStore {
 
           updatedChatIDs.insert(message.chatID)
           try upsertMessage(message, into: replicaDatabase)
+          try replaceMessageAttachments(message, in: replicaDatabase)
           try updateMessageWatchEvent(message, in: replicaDatabase)
         }
 
@@ -278,6 +281,11 @@ public enum ReplicaStore {
   private struct ReplicaState {
     let sourceMaxRowID: Int64
   }
+
+  private static let messageAttachmentColumns: Set<String> = [
+    "message_id",
+    "replica_relative_path",
+  ]
 
   private struct ReplicaCounts {
     let chatCount: Int
@@ -364,6 +372,7 @@ public enum ReplicaStore {
             if let message = event.message {
               messageCount += 1
               try upsertMessage(message, into: replicaDatabase)
+              try replaceMessageAttachments(message, in: replicaDatabase)
             } else if let reaction = event.reaction, !reaction.targetGUID.isEmpty {
               refreshedMessageGUIDs.insert(reaction.targetGUID)
             }
@@ -382,6 +391,7 @@ public enum ReplicaStore {
           }
 
           try upsertMessage(message, into: replicaDatabase)
+          try replaceMessageAttachments(message, in: replicaDatabase)
           try updateMessageWatchEvent(message, in: replicaDatabase)
         }
       }
@@ -418,6 +428,10 @@ public enum ReplicaStore {
       let tables = try databaseTables(database: database)
       guard requiredTables.isSubset(of: tables) else {
         throw MessagesStoreError.unsupportedSchema("replica database schema mismatch")
+      }
+      let attachmentColumns = try databaseColumns(database: database, table: "message_attachments")
+      guard attachmentColumns == messageAttachmentColumns else {
+        throw MessagesStoreError.unsupportedSchema("replica attachment schema mismatch")
       }
 
       let metadata = try loadMetadata(database: database)
@@ -484,6 +498,11 @@ public enum ReplicaStore {
           attachments_json TEXT NOT NULL,
           reactions_json TEXT NOT NULL
         );
+        CREATE TABLE message_attachments (
+          message_id INTEGER NOT NULL,
+          replica_relative_path TEXT NOT NULL,
+          PRIMARY KEY (message_id, replica_relative_path)
+        );
         CREATE TABLE watch_events (
           source_rowid INTEGER PRIMARY KEY,
           event_type TEXT NOT NULL,
@@ -493,6 +512,8 @@ public enum ReplicaStore {
         );
         CREATE INDEX idx_chats_last_message ON chats(last_message_at DESC, chat_id DESC);
         CREATE INDEX idx_messages_chat_order ON messages(chat_id, created_at DESC, message_id DESC);
+        CREATE INDEX idx_message_attachments_replica_path
+          ON message_attachments(replica_relative_path, message_id);
         CREATE INDEX idx_watch_events_chat_rowid ON watch_events(chat_id, source_rowid);
         """
     )
@@ -646,7 +667,7 @@ public enum ReplicaStore {
     sqliteBindText(
       statement,
       index: 14,
-      value: jsonString(from: message.attachments.map(\.jsonObject))
+      value: jsonString(from: replicaAttachmentObjects(for: message.attachments))
     )
     sqliteBindText(
       statement,
@@ -656,6 +677,56 @@ public enum ReplicaStore {
 
     guard sqlite3_step(statement) == SQLITE_DONE else {
       throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+    }
+  }
+
+  private static func replaceMessageAttachments(
+    _ message: ChatMessage,
+    in database: OpaquePointer
+  ) throws {
+    let deleteSQL = "DELETE FROM message_attachments WHERE message_id = ?;"
+    var deleteStatement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, deleteSQL, -1, &deleteStatement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(deleteStatement)
+    }
+
+    sqlite3_bind_int64(deleteStatement, 1, message.id)
+    guard sqlite3_step(deleteStatement) == SQLITE_DONE else {
+      throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+    }
+
+    let insertSQL = """
+      INSERT INTO message_attachments (
+        message_id,
+        replica_relative_path
+      ) VALUES (?, ?);
+      """
+    var insertStatement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, insertSQL, -1, &insertStatement, nil) == SQLITE_OK else {
+      throw MessagesStoreError.prepareStatement(lastSQLiteError(from: database))
+    }
+    defer {
+      sqlite3_finalize(insertStatement)
+    }
+
+    for attachment in message.attachments {
+      guard
+        attachment.missing == false,
+        let replicaRelativePath = attachment.replicaRelativePath
+      else {
+        continue
+      }
+
+      sqlite3_reset(insertStatement)
+      sqlite3_clear_bindings(insertStatement)
+      sqlite3_bind_int64(insertStatement, 1, message.id)
+      sqliteBindText(insertStatement, index: 2, value: replicaRelativePath)
+      guard sqlite3_step(insertStatement) == SQLITE_DONE else {
+        throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+      }
     }
   }
 
@@ -680,7 +751,7 @@ public enum ReplicaStore {
 
     sqlite3_bind_int64(statement, 1, event.rowID)
     sqliteBindText(statement, index: 2, value: event.event)
-    sqliteBindText(statement, index: 3, value: jsonString(from: event.jsonObject))
+    sqliteBindText(statement, index: 3, value: jsonString(from: replicaEventObject(event)))
     sqlite3_bind_int64(statement, 4, event.message?.chatID ?? event.reaction?.chatID ?? 0)
     sqliteBindOptionalText(
       statement,
@@ -714,7 +785,7 @@ public enum ReplicaStore {
     sqliteBindText(
       statement,
       index: 1,
-      value: jsonString(from: WatchEvent(event: "message", message: message).jsonObject)
+      value: jsonString(from: replicaEventObject(WatchEvent(event: "message", message: message)))
     )
     sqlite3_bind_int64(statement, 2, message.chatID)
     sqliteBindOptionalText(statement, index: 3, value: message.createdAt)
@@ -722,6 +793,54 @@ public enum ReplicaStore {
 
     guard sqlite3_step(statement) == SQLITE_DONE else {
       throw MessagesStoreError.stepStatement(lastSQLiteError(from: database))
+    }
+  }
+
+  private static func replicaEventObject(_ event: WatchEvent) -> [String: Any] {
+    [
+      "event": event.event,
+      "message": event.message.map(replicaMessageObject) ?? NSNull(),
+      "reaction": event.reaction?.jsonObject ?? NSNull(),
+    ]
+  }
+
+  private static func replicaMessageObject(_ message: ChatMessage) -> [String: Any] {
+    [
+      "id": message.id,
+      "chat_id": message.chatID,
+      "guid": message.guid,
+      "reply_to_guid": message.replyToGUID ?? NSNull(),
+      "thread_originator_guid": message.threadOriginatorGUID ?? NSNull(),
+      "sender": message.sender,
+      "sender_name": message.senderName ?? NSNull(),
+      "sender_label": message.senderLabel ?? NSNull(),
+      "from_me": message.fromMe,
+      "text": message.text,
+      "created_at": message.createdAt ?? NSNull(),
+      "service": message.service,
+      "destination_caller_id": message.destinationCallerID ?? NSNull(),
+      "attachments": replicaAttachmentObjects(for: message.attachments),
+      "reactions": message.reactions.map(\.jsonObject),
+    ]
+  }
+
+  private static func replicaAttachmentObjects(
+    for attachments: [ChatMessage.Attachment]
+  ) -> [[String: Any]] {
+    attachments.map { attachment in
+      var object: [String: Any] = [
+        "filename": attachment.filename,
+        "transfer_name": attachment.transferName,
+        "uti": attachment.uti,
+        "mime_type": attachment.mimeType,
+        "total_bytes": attachment.totalBytes,
+        "is_sticker": attachment.isSticker,
+        "missing": attachment.missing,
+      ]
+      if let replicaRelativePath = attachment.replicaRelativePath {
+        object["replica_relative_path"] = replicaRelativePath
+      }
+      return object
     }
   }
 }

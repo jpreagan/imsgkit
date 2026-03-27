@@ -69,8 +69,9 @@ func loadChatAttachments(
         mimeType: sqliteText(statement, column: 3),
         totalBytes: sqlite3_column_int64(statement, 4),
         isSticker: sqlite3_column_int64(statement, 5) != 0,
-        originalPath: resolved.resolved,
-        missing: resolved.missing
+        path: resolved.path,
+        missing: resolved.missing,
+        replicaRelativePath: resolved.replicaRelativePath
       )
     )
   }

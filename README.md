@@ -117,8 +117,8 @@ On the source Mac, `imsgkit` reads:
 For Messages access on macOS, grant Full Disk Access to whatever is doing the reading:
 
 - If you run `imsgctl` or `imsgd` manually in Terminal, Terminal needs Full Disk Access.
-- If you run `imsgd` with `brew services`, the Homebrew-installed `imsgd` binary also needs Full Disk Access, for example `/opt/homebrew/bin/imsgd` on Apple Silicon.
-- In System Settings > Privacy & Security > Full Disk Access, add the Homebrew `imsgd` binary. If `/opt` is hard to browse in the file picker, press `Shift+Command+G` and enter the path directly.
+- If you run `imsgd` with `brew services`, grant Full Disk Access to the exact Homebrew service binary path, for example `/opt/homebrew/opt/imsgd/bin/imsgd` on Apple Silicon or `/usr/local/opt/imsgd/bin/imsgd` on Intel Macs.
+- In `System Settings > Privacy & Security > Full Disk Access`, if `/opt` is hard to browse in the file picker, press `Shift+Command+G` and enter the path directly.
 
 If Contacts permission is unavailable, `imsgkit` still works, but falls back to raw identifiers where necessary.
 

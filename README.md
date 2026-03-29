@@ -1,8 +1,10 @@
+<div align="center"><img src="assets/logo.png" alt="imsgkit" width="200" /></div>
+
 # imsgkit
 
-`imsgkit` is a CLI for reading your Messages data.
+Read your Apple Messages from any machine.
 
-On a source Mac, `imsgd` reads Apple Messages data and can keep a portable `replica.db` in sync. On another macOS or Linux machine, `imsgctl` reads that replica locally. The remote machine does not need to sign in to a personal Apple ID.
+`imsgd` runs on your signed-in Mac and keeps a portable `replica.db` in sync. `imsgctl` reads that replica on any other macOS or Linux machine — no Apple ID required on the reading end. Works locally too.
 
 ## What It Can Do
 
@@ -11,7 +13,7 @@ On a source Mac, `imsgd` reads Apple Messages data and can keep a portable `repl
 - Filter history by start and end time.
 - Include attachment metadata.
 - Watch new message activity, including reactions.
-- Emit JSON output for scripts and other tools.
+- Emit JSON output for scripts and agents.
 
 ## Install
 
@@ -52,21 +54,18 @@ imsgctl history --chat-id 42 --limit 20
 imsgctl watch --chat-id 42 --reactions
 ```
 
-By default:
+By default, `imsgctl` prefers `~/Library/Application Support/imsgkit/replica.db` when a valid replica is present, otherwise falls back to `~/Library/Messages/chat.db`.
 
-- On macOS, `imsgctl` prefers `~/Library/Application Support/imsgkit/replica.db` when a valid replica is present. Otherwise it falls back to `~/Library/Messages/chat.db`.
-- On Linux, `imsgctl` reads `~/.local/share/imsgkit/replica.db`, or `$XDG_DATA_HOME/imsgkit/replica.db` when `XDG_DATA_HOME` is set to an absolute path.
-
-You can always choose a specific database explicitly:
+You can always point to a specific database explicitly:
 
 ```bash
-imsgctl chats --db ~/Library/Application\ Support/imsgkit/replica.db
-imsgctl history --db ~/.local/share/imsgkit/replica.db --chat-id 42
+imsgctl chats --db ~/Library/Messages/chat.db
+imsgctl history --db ~/Library/Application\ Support/imsgkit/replica.db --chat-id 42
 ```
 
 ## Remote Replica Sync
 
-Most users will run `imsgd sync` on a signed-in Mac and `imsgctl` on a different machine.
+Many users will run `imsgd sync` on a signed-in Mac and `imsgctl` on a different machine.
 
 1. Create source-side sync config at `~/Library/Application Support/imsgkit/config.toml`:
 
@@ -82,7 +81,7 @@ Use an explicit remote path in `publish`.
 - macOS remote: `user@remote:~/Library/Application Support/imsgkit/replica.db`
 - Linux remote: `user@remote:~/.local/share/imsgkit/replica.db`
 
-2. Prepare the remote path and make sure `sqlite3_rsync` is installed on the remote machine.
+2. Prepare the remote path, ensure `sqlite3_rsync` is installed on the remote machine, and confirm the source Mac has SSH access to it.
 
 3. Start sync on the source Mac:
 
@@ -103,6 +102,10 @@ imsgctl chats
 imsgctl history --chat-id 42 --limit 20
 imsgctl watch --chat-id 42 --reactions
 ```
+
+On Linux, `imsgctl` reads `~/.local/share/imsgkit/replica.db` by default, or `$XDG_DATA_HOME/imsgkit/replica.db` when `XDG_DATA_HOME` is set to an absolute path.
+
+`imsgd sync` also maintains a sibling `attachments/` directory next to `replica.db`, so replica-backed attachment paths reported by `imsgctl` point to files on the consuming machine rather than paths on the source Mac.
 
 ## Permissions
 

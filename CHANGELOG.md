@@ -6,14 +6,16 @@ The format is based on Keep a Changelog.
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Added
 
-- Referenced attachment mirroring alongside published replicas, with mirrored files stored in a sibling `attachments/` directory next to `replica.db`.
+- Replica sync now mirrors referenced attachments alongside `replica.db` in a sibling `attachments/` directory. [#26](https://github.com/jpreagan/imsgkit/pull/26)
 
 ### Changed
 
-- Replica-backed attachment output now includes only the consumer-local `path` field and does not expose internal replica attachment keys or source-machine attachment paths.
-- Attachment `missing` status is now evaluated on the machine reading the replica instead of being frozen from the source Mac.
+- Replica attachment output now shows only the local attachment `path` for the machine reading the replica. [#26](https://github.com/jpreagan/imsgkit/pull/26)
+- Replica attachment `missing` is now determined on the machine reading the replica. [#26](https://github.com/jpreagan/imsgkit/pull/26)
 
 ## [0.2.0]
 

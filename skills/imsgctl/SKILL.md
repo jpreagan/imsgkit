@@ -115,6 +115,13 @@ imsgctl history --db ~/.local/share/imsgkit/replica.db --chat-id 42 --limit 50 -
 4. Add `--start`, `--end`, `--limit`, or `--attachments` only as needed.
 5. Use `imsgctl watch` only if the user asked for live monitoring.
 
+## Viewing Image Attachments
+
+When `--attachments` reveals an image, the file is often too large to read directly. Convert it to a smaller JPEG preview, then read the result:
+
+- **macOS:** `sips -s format jpeg -Z 800 "/path/to/image.heic" --out /tmp/preview.jpg`
+- **Linux:** `magick "/path/to/image.heic" -resize 800x800 /tmp/preview.jpg`
+
 ## Failure Modes
 
 - If direct macOS reads fail, check Full Disk Access first.
